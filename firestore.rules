@@ -1,0 +1,41 @@
+// firestore.rules
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // User profiles - users can only read and write their own data
+    match /users/{userId} {
+      allow read, update, delete: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null;
+    }
+    
+    // Social accounts - users can only access their own connected accounts
+    match /socialAccounts/{accountId} {
+      allow read, write: if request.auth != null && 
+                           request.auth.uid == resource.data.userId;
+    }
+    
+    // Posts - users can manage their own posts, but can read shared/public posts
+    match /posts/{postId} {
+      allow read: if request.auth != null && (
+                    resource.data.userId == request.auth.uid ||
+                    resource.data.status == 'published'
+                  );
+      allow create, update, delete: if request.auth != null && 
+                                      request.resource.data.userId == request.auth.uid;
+    }
+    
+    // Schedules - users can only access their own schedules
+    match /schedules/{scheduleId} {
+      allow read, write: if request.auth != null && 
+                           resource.data.userId == request.auth.uid;
+    }
+    
+    // Post analytics - users can only access analytics for their own posts
+    match /postAnalytics/{analyticsId} {
+      allow read: if request.auth != null && exists(/databases/$(database)/documents/posts/$(resource.data.postId)) &&
+                    get(/databases/$(database)/documents/posts/$(resource.data.postId)).data.userId == request.auth.uid;
+      // Only system functions should write analytics
+      allow write: if false;
+    }
+  }
+}
