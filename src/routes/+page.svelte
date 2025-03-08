@@ -1,4 +1,4 @@
-// src/routes/+page.svelte
+<!-- src/routes/+page.svelte -->
 <script>
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';

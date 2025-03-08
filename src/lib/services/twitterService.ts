@@ -1,14 +1,91 @@
-// src/lib/services/twitterService.js
-import { TwitterApi } from 'twitter-api-v2';
-import { doc, updateDoc, setDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '$lib/firebase/firebase';
+// src/lib/services/twitterService.ts
+import { TwitterApi, type TweetV2, type TweetV2PostTweetResult } from 'twitter-api-v2';
+import {
+    doc,
+    updateDoc,
+    collection,
+    addDoc,
+    serverTimestamp,
+    getDocs,
+    getDoc,
+    query,
+    where,
+    type DocumentData,
+    Timestamp
+} from 'firebase/firestore';
+import { getFirebaseFirestore } from '$lib/firebase/firebase';
+
+// Types for Twitter credentials and responses
+interface TwitterCredentials {
+    accessToken: string;
+    accessSecret: string;
+}
+
+interface TwitterTokens extends TwitterCredentials {
+    screenName: string;
+    userId: string;
+}
+
+interface TwitterAnalytics {
+    tweetId: string;
+    retweetCount: number;
+    replyCount: number;
+    likeCount: number;
+    quoteCount: number;
+}
+
+interface PostAnalytics {
+    postId: string;
+    recordedAt: Timestamp;
+    impressions: number;
+    engagements: number;
+    likes: number;
+    shares: number;
+    comments: number;
+    clicks: number;
+    platformSpecificData: {
+        twitter?: TwitterAnalytics;
+    };
+}
+
+interface ServiceResponse<T = unknown> {
+    success: boolean;
+    error?: string;
+    data?: T;
+}
+
+interface TwitterPostOptions {
+    media?: {
+        media_ids: string[];
+    };
+}
+
+interface PostData {
+    content: string;
+    hashtags?: string[];
+    media?: Array<{
+        url: string;
+        type: string;
+    }>;
+    status?: string;
+    publishedAt?: Timestamp;
+    platformData?: {
+        twitter?: {
+            tweetId?: string;
+        };
+    };
+}
 
 /**
  * Create a Twitter API client with user credentials
- * @param {Object} credentials - Twitter API credentials
- * @returns {TwitterApi} - Twitter API client
+ * @param credentials - Twitter API credentials
+ * @returns Twitter API client
  */
-function createTwitterClient(credentials) {
+function createTwitterClient(credentials: TwitterCredentials): TwitterApi {
+    if (!import.meta.env.VITE_TWITTER_API_KEY || !import.meta.env.VITE_TWITTER_API_SECRET) {
+        throw new Error('Twitter API keys are not configured in environment variables');
+    }
+
     return new TwitterApi({
         appKey: import.meta.env.VITE_TWITTER_API_KEY,
         appSecret: import.meta.env.VITE_TWITTER_API_SECRET,
@@ -19,16 +96,20 @@ function createTwitterClient(credentials) {
 
 /**
  * Connect a user account to Twitter
- * @param {string} userId - Firebase user ID
- * @param {Object} twitterTokens - Twitter OAuth tokens
- * @returns {Promise<Object>} - Status of the operation
+ * @param userId - Firebase user ID
+ * @param twitterTokens - Twitter OAuth tokens
+ * @returns Status of the operation
  */
-export async function connectTwitterAccount(userId, twitterTokens) {
+export async function connectTwitterAccount(
+    userId: string,
+    twitterTokens: TwitterTokens
+): Promise<ServiceResponse> {
     try {
         const { accessToken, accessSecret, screenName, userId: twitterUserId } = twitterTokens;
+        const db = getFirebaseFirestore();
 
         // Store Twitter account credentials in Firestore
-        await addDoc(collection(db, 'socialAccounts'), {
+        await addDoc(collection(db, 'users', userId, 'socialAccounts'), {
             userId,
             platform: 'twitter',
             accessToken,
@@ -43,22 +124,30 @@ export async function connectTwitterAccount(userId, twitterTokens) {
         return { success: true };
     } catch (error) {
         console.error('Error connecting Twitter account:', error);
-        return { success: false, error: error.message };
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error occurred'
+        };
     }
 }
 
 /**
  * Publish a post to Twitter
- * @param {string} userId - Firebase user ID
- * @param {string} postId - Firestore post ID
- * @returns {Promise<Object>} - Status of the operation and Twitter post data
+ * @param userId - Firebase user ID
+ * @param postId - Firestore post ID
+ * @returns Status of the operation and Twitter post data
  */
-export async function publishToTwitter(userId, postId) {
+export async function publishToTwitter(
+    userId: string,
+    postId: string
+): Promise<ServiceResponse<{ tweetId: string }>> {
     try {
+        const db = getFirebaseFirestore();
+
         // Get user's Twitter credentials
-        const socialAccountsRef = collection(db, 'socialAccounts');
+        const socialAccountsRef = collection(db, 'users', userId, 'socialAccounts');
         const querySnapshot = await getDocs(
-            query(socialAccountsRef, where('userId', '==', userId), where('platform', '==', 'twitter'))
+            query(socialAccountsRef, where('platform', '==', 'twitter'))
         );
 
         if (querySnapshot.empty) {
@@ -68,14 +157,14 @@ export async function publishToTwitter(userId, postId) {
         const twitterAccount = querySnapshot.docs[0].data();
 
         // Get the post data
-        const postRef = doc(db, 'posts', postId);
+        const postRef = doc(db, 'content', postId);
         const postSnap = await getDoc(postRef);
 
         if (!postSnap.exists()) {
             return { success: false, error: 'Post not found.' };
         }
 
-        const postData = postSnap.data();
+        const postData = postSnap.data() as PostData;
 
         // Create Twitter API client
         const twitterClient = createTwitterClient({
@@ -93,7 +182,7 @@ export async function publishToTwitter(userId, postId) {
         const fullTweetText = tweetText + hashtagsText;
 
         // Check if the post has media
-        let tweetOptions = {};
+        const tweetOptions: TwitterPostOptions = {};
         if (postData.media && postData.media.length > 0) {
             // For simplicity in this MVP, we're assuming media URLs are already processed and available
             // In a real app, you'd handle media uploads to Twitter
@@ -101,7 +190,7 @@ export async function publishToTwitter(userId, postId) {
         }
 
         // Publish the tweet
-        const tweet = await twitterClient.v2.tweet(fullTweetText, tweetOptions);
+        const tweet = await twitterClient.v2.tweet(fullTweetText, tweetOptions) as TweetV2PostTweetResult;
 
         // Update the post status in Firestore
         await updateDoc(postRef, {
@@ -131,25 +220,33 @@ export async function publishToTwitter(userId, postId) {
             }
         });
 
-        return { success: true, tweetId: tweet.data.id };
+        return { success: true, data: { tweetId: tweet.data.id } };
     } catch (error) {
         console.error('Error publishing to Twitter:', error);
-        return { success: false, error: error.message };
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error occurred'
+        };
     }
 }
 
 /**
  * Fetch tweet analytics
- * @param {string} userId - Firebase user ID
- * @param {string} postId - Firestore post ID
- * @returns {Promise<Object>} - Tweet analytics data
+ * @param userId - Firebase user ID
+ * @param postId - Firestore post ID
+ * @returns Tweet analytics data
  */
-export async function fetchTweetAnalytics(userId, postId) {
+export async function fetchTweetAnalytics(
+    userId: string,
+    postId: string
+): Promise<ServiceResponse<PostAnalytics>> {
     try {
+        const db = getFirebaseFirestore();
+
         // Get user's Twitter credentials
-        const socialAccountsRef = collection(db, 'socialAccounts');
+        const socialAccountsRef = collection(db, 'users', userId, 'socialAccounts');
         const querySnapshot = await getDocs(
-            query(socialAccountsRef, where('userId', '==', userId), where('platform', '==', 'twitter'))
+            query(socialAccountsRef, where('platform', '==', 'twitter'))
         );
 
         if (querySnapshot.empty) {
@@ -159,14 +256,14 @@ export async function fetchTweetAnalytics(userId, postId) {
         const twitterAccount = querySnapshot.docs[0].data();
 
         // Get the post data to get the tweet ID
-        const postRef = doc(db, 'posts', postId);
+        const postRef = doc(db, 'content', postId);
         const postSnap = await getDoc(postRef);
 
         if (!postSnap.exists()) {
             return { success: false, error: 'Post not found.' };
         }
 
-        const postData = postSnap.data();
+        const postData = postSnap.data() as PostData;
 
         // Check if the post has Twitter platform data
         if (!postData.platformData?.twitter?.tweetId) {
@@ -187,12 +284,13 @@ export async function fetchTweetAnalytics(userId, postId) {
         });
 
         // Extract metrics
-        const { retweet_count, reply_count, like_count, quote_count } = tweetData.data.public_metrics;
+        const metrics = tweetData.data.public_metrics!;
+        const { retweet_count, reply_count, like_count, quote_count } = metrics;
 
         // Update analytics in Firestore
-        const analyticsData = {
+        const analyticsData: PostAnalytics = {
             postId,
-            recordedAt: serverTimestamp(),
+            recordedAt: serverTimestamp() as Timestamp,
             impressions: 0, // Twitter API doesn't provide impression count in v2 for free
             engagements: retweet_count + reply_count + like_count + quote_count,
             likes: like_count,
@@ -213,9 +311,85 @@ export async function fetchTweetAnalytics(userId, postId) {
         // Add to analytics collection
         await addDoc(collection(db, 'postAnalytics'), analyticsData);
 
-        return { success: true, analytics: analyticsData };
+        return { success: true, data: analyticsData };
     } catch (error) {
         console.error('Error fetching tweet analytics:', error);
-        return { success: false, error: error.message };
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error occurred'
+        };
+    }
+}
+
+/**
+ * Get all Twitter accounts connected to a user
+ * @param userId - Firebase user ID
+ * @returns List of connected Twitter accounts
+ */
+export async function getConnectedTwitterAccounts(
+    userId: string
+): Promise<ServiceResponse<Array<DocumentData>>> {
+    try {
+        const db = getFirebaseFirestore();
+
+        const socialAccountsRef = collection(db, 'users', userId, 'socialAccounts');
+        const querySnapshot = await getDocs(
+            query(socialAccountsRef, where('platform', '==', 'twitter'))
+        );
+
+        const accounts = querySnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            // Remove sensitive information from the client response
+            accessToken: undefined,
+            accessSecret: undefined
+        }));
+
+        return { success: true, data: accounts };
+    } catch (error) {
+        console.error('Error fetching Twitter accounts:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error occurred'
+        };
+    }
+}
+
+/**
+ * Disconnect a Twitter account
+ * @param userId - Firebase user ID
+ * @param accountId - Firestore account document ID
+ * @returns Status of the operation
+ */
+export async function disconnectTwitterAccount(
+    userId: string,
+    accountId: string
+): Promise<ServiceResponse> {
+    try {
+        const db = getFirebaseFirestore();
+
+        const accountRef = doc(db, 'users', userId, 'socialAccounts', accountId);
+        const accountSnap = await getDoc(accountRef);
+
+        if (!accountSnap.exists()) {
+            return { success: false, error: 'Account not found.' };
+        }
+
+        // Verify the account belongs to Twitter platform
+        const accountData = accountSnap.data();
+        if (accountData.platform !== 'twitter') {
+            return { success: false, error: 'Invalid account type.' };
+        }
+
+        // Delete the account document
+        await deleteDoc(accountRef);
+
+        return { success: true };
+    } catch (error) {
+        console.error('Error disconnecting Twitter account:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error occurred'
+        };
     }
 }

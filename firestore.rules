@@ -1,41 +1,101 @@
 // firestore.rules
+
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // User profiles - users can only read and write their own data
-    match /users/{userId} {
-      allow read, update, delete: if request.auth != null && request.auth.uid == userId;
-      allow create: if request.auth != null;
+    // Function to check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
     }
     
-    // Social accounts - users can only access their own connected accounts
-    match /socialAccounts/{accountId} {
-      allow read, write: if request.auth != null && 
-                           request.auth.uid == resource.data.userId;
+    // Function to check if the user is the owner of the document
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
     }
     
-    // Posts - users can manage their own posts, but can read shared/public posts
+    // Function to check if all required post fields are present and valid
+    function isValidPost(post) {
+      return post.size() >= 6 
+        && 'content' in post && post.content is string
+        && 'userId' in post && post.userId is string
+        && 'platforms' in post && post.platforms is list
+        && 'scheduledTime' in post && post.scheduledTime is timestamp
+        && 'status' in post && post.status is string
+        && 'createdAt' in post && post.createdAt is timestamp
+        && 'updatedAt' in post && post.updatedAt is timestamp;
+    }
+    
+    // Function to verify update operation only changes allowed fields
+    function isValidPostUpdate(post) {
+      // Must not change the userId
+      return !('userId' in post) ||
+        (resource.data.userId == post.userId) &&
+        // Required fields must still be valid if present
+        (!('platforms' in post) || post.platforms is list) &&
+        (!('status' in post) || post.status is string) &&
+        (!('scheduledTime' in post) || post.scheduledTime is timestamp) &&
+        (!('content' in post) || post.content is string);
+    }
+    
+    // Posts collection rules
     match /posts/{postId} {
-      allow read: if request.auth != null && (
-                    resource.data.userId == request.auth.uid ||
-                    resource.data.status == 'published'
-                  );
-      allow create, update, delete: if request.auth != null && 
-                                      request.resource.data.userId == request.auth.uid;
+      // Allow read if the user is authenticated and owns the post
+      allow read: if isAuthenticated() && 
+                    resource.data.userId == request.auth.uid;
+      
+      // Allow create if the user is authenticated, userId matches, and post is valid
+      allow create: if isAuthenticated() && 
+                     request.resource.data.userId == request.auth.uid &&
+                     isValidPost(request.resource.data);
+      
+      // Allow update if the user owns the post and the update is valid
+      allow update: if isOwner(resource.data.userId) &&
+                     isValidPostUpdate(request.resource.data);
+      
+      // Allow delete if the user owns the post
+      allow delete: if isOwner(resource.data.userId);
     }
     
-    // Schedules - users can only access their own schedules
-    match /schedules/{scheduleId} {
-      allow read, write: if request.auth != null && 
-                           resource.data.userId == request.auth.uid;
+    // User-specific settings and preferences
+    match /users/{userId} {
+      // Only the user can read or write their own data
+      allow read, write: if isOwner(userId);
+      
+      // User's calendar settings
+      match /calendarSettings/{settingId} {
+        allow read, write: if isOwner(userId);
+      }
     }
     
-    // Post analytics - users can only access analytics for their own posts
-    match /postAnalytics/{analyticsId} {
-      allow read: if request.auth != null && exists(/databases/$(database)/documents/posts/$(resource.data.postId)) &&
-                    get(/databases/$(database)/documents/posts/$(resource.data.postId)).data.userId == request.auth.uid;
-      // Only system functions should write analytics
-      allow write: if false;
+    // Analytics data (read-only for the user)
+    match /analytics/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false; // Only backend can write analytics
+      
+      // Individual analytic records
+      match /records/{recordId} {
+        allow read: if isOwner(userId);
+      }
+    }
+    
+    // Platform connections (social media API keys, tokens, etc.)
+    match /platformConnections/{userId} {
+      allow read: if isOwner(userId);
+      
+      // Only allow updates to specific fields, not entire document replacement
+      allow update: if isOwner(userId) && 
+                     request.resource.data.keys().hasOnly(resource.data.keys());
+                     
+      // Individual platform connections
+      match /platforms/{platformId} {
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId);
+      }
+    }
+    
+    // Default deny all other requests
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
