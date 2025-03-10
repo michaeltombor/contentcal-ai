@@ -1,31 +1,20 @@
 <!-- src/routes/calendar/+page.svelte -->
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import Calendar from './components/Calendar.svelte';
   import PostCreateModal from './components/PostCreateModal.svelte';
   import { browser } from '$app/environment';
-  import { getAuth, onAuthStateChanged } from 'firebase/auth';
   import { navigateToToday } from '$lib/stores/calendarStore';
+  import { user, isLoading } from '$lib/stores/authStore';
   
   let isCreateModalOpen = false;
   let initialDate = new Date();
-  let isAuthenticated = false;
-  let isLoading = true;
   
   onMount(() => {
     if (browser) {
-      const auth = getAuth();
-      
-      // Check authentication status
-      const unsubscribe = onAuthStateChanged(auth, (user) => {
-        isAuthenticated = !!user;
-        isLoading = false;
-      });
-      
       // Set today as default when the component mounts
       navigateToToday();
-      
-      return unsubscribe;
     }
   });
   
@@ -37,6 +26,11 @@
   function closeCreateModal() {
     isCreateModalOpen = false;
   }
+
+  // Add a simple redirection to login if not authenticated
+  $: if (!$isLoading && browser && !$user) {
+    goto('/login');
+  }
 </script>
 
 <svelte:head>
@@ -46,13 +40,16 @@
 
 <!-- Main Calendar Container -->
 <div class="h-screen flex flex-col bg-gray-50">
-  {#if isLoading}
+  {#if $isLoading}
     <!-- Loading state -->
     <div class="flex-1 flex items-center justify-center">
-      <div class="inline-block animate-spin h-8 w-8 border-4 border-gray-200 rounded-full border-t-blue-600"></div>
+      <div class="text-center">
+        <div class="inline-block animate-spin h-8 w-8 border-4 border-gray-200 rounded-full border-t-blue-600 mb-4"></div>
+        <p class="text-gray-600">Loading your calendar...</p>
+      </div>
     </div>
-  {:else if !isAuthenticated}
-    <!-- Authentication required message -->
+  {:else if !$user}
+    <!-- Authentication required message - shouldn't happen due to redirection -->
     <div class="flex-1 flex items-center justify-center">
       <div class="text-center p-8 max-w-md">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mx-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -66,7 +63,7 @@
       </div>
     </div>
   {:else}
-    <!-- Calendar Component -->
+    <!-- Calendar Component with Auth User -->
     <div class="flex-1 overflow-hidden">
       <Calendar {openCreateModal} />
     </div>

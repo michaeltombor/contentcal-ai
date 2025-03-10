@@ -56,7 +56,7 @@ interface ServiceResponse<T = unknown> {
 
 interface TwitterPostOptions {
     media?: {
-        media_ids: string[];
+        media_ids: [string] | [string, string] | [string, string, string] | [string, string, string, string];
     };
 }
 
@@ -181,12 +181,13 @@ export async function publishToTwitter(
 
         const fullTweetText = tweetText + hashtagsText;
 
-        // Check if the post has media
+        // Prepare tweet options with media
         const tweetOptions: TwitterPostOptions = {};
         if (postData.media && postData.media.length > 0) {
-            // For simplicity in this MVP, we're assuming media URLs are already processed and available
-            // In a real app, you'd handle media uploads to Twitter
-            // tweetOptions.media = { media_ids: [...] };
+            const mediaIds = postData.media.map(media => media.url); // Assuming media.url is the media ID
+            if (mediaIds.length > 0 && mediaIds.length <= 4) {
+                tweetOptions.media = { media_ids: mediaIds as [string] | [string, string] | [string, string, string] | [string, string, string, string] };
+            }
         }
 
         // Publish the tweet
@@ -380,9 +381,8 @@ export async function disconnectTwitterAccount(
         if (accountData.platform !== 'twitter') {
             return { success: false, error: 'Invalid account type.' };
         }
-
         // Delete the account document
-        await deleteDoc(accountRef);
+        await import('firebase/firestore').then(module => module.deleteDoc(accountRef));
 
         return { success: true };
     } catch (error) {

@@ -1,49 +1,50 @@
 // src/lib/stores/toastStore.ts
-import { writable } from 'svelte/store';
-import { v4 as uuidv4 } from 'uuid';
+// Move toast functionality to a store file (not a route file)
 
-export type ToastType = 'success' | 'error' | 'info' | 'warning';
+import { writable } from 'svelte/store';
 
 export interface Toast {
     id: string;
-    type: ToastType;
     message: string;
+    type: 'success' | 'error' | 'info' | 'warning';
     timeout: number;
 }
 
-// Initialize the toast store
-const createToastStore = () => {
+function createToastStore() {
     const { subscribe, update } = writable<Toast[]>([]);
 
-    // Remove a toast by ID
-    const remove = (id: string) => {
-        update(toasts => toasts.filter(toast => toast.id !== id));
-    };
+    function add(toast: Omit<Toast, 'id'>) {
+        const id = Date.now().toString();
+        update(toasts => [{ ...toast, id }, ...toasts]);
 
-    // Add a new toast
-    const add = (message: string, type: ToastType = 'info', timeout = 3000) => {
-        const id = uuidv4();
-
-        update(toasts => [
-            ...toasts,
-            { id, message, type, timeout }
-        ]);
-
-        // Auto-remove toast after timeout
-        if (timeout > 0) {
+        if (toast.timeout) {
             setTimeout(() => {
                 remove(id);
-            }, timeout);
+            }, toast.timeout);
         }
 
         return id;
-    };
+    }
 
-    // Helper methods for different toast types
-    const success = (message: string, timeout = 3000) => add(message, 'success', timeout);
-    const error = (message: string, timeout = 5000) => add(message, 'error', timeout);
-    const info = (message: string, timeout = 3000) => add(message, 'info', timeout);
-    const warning = (message: string, timeout = 4000) => add(message, 'warning', timeout);
+    function remove(id: string) {
+        update(toasts => toasts.filter(t => t.id !== id));
+    }
+
+    function success(message: string, timeout = 3000) {
+        return add({ message, type: 'success', timeout });
+    }
+
+    function error(message: string, timeout = 3000) {
+        return add({ message, type: 'error', timeout });
+    }
+
+    function info(message: string, timeout = 3000) {
+        return add({ message, type: 'info', timeout });
+    }
+
+    function warning(message: string, timeout = 3000) {
+        return add({ message, type: 'warning', timeout });
+    }
 
     return {
         subscribe,
@@ -54,7 +55,6 @@ const createToastStore = () => {
         info,
         warning
     };
-};
+}
 
-// Export the toast store as a singleton
 export const toast = createToastStore();

@@ -275,7 +275,7 @@
                 class="flex items-center px-3 py-1 rounded-full text-sm {selectedPlatforms.includes(platform.id) ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700'}"
                 on:click={() => togglePlatform(platform.id)}
               >
-                <span class="mr-1" style="color: {platform.color};" bind:innerHTML={platform.icon}></span>
+                <span class="mr-1" style="color: {platform.color};">{@html platform.icon}</span>
                 {platform.name}
               </button>
             {/each}

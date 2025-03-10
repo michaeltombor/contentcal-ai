@@ -1,174 +1,147 @@
 // src/lib/stores/authStore.ts
-import { writable, derived, type Readable } from 'svelte/store';
-import type { User, UserCredential } from 'firebase/auth';
-import {
-    createUserWithEmailAndPassword,
-    signInWithEmailAndPassword,
-    signOut as firebaseSignOut,
-    onAuthStateChanged,
-    sendPasswordResetEmail,
-    updateProfile,
-    GoogleAuthProvider,
-    signInWithPopup,
-    type Auth
-} from 'firebase/auth';
+
+import { writable } from 'svelte/store';
 import { browser } from '$app/environment';
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as firebaseSignOut, type User } from 'firebase/auth';
 
-// Types
-export interface AuthState {
-    user: User | null;
-    loading: boolean;
-    error: string | null;
+// Create a store for the current user
+export const user = writable<User | null>(null);
+export const isLoading = writable(true);
+export const authError = writable<string | null>(null);
+
+// Initialize auth state listener
+export function initAuth() {
+    if (!browser) return;
+
+    const auth = getAuth();
+
+    // Set up auth state listener
+    const unsubscribe = onAuthStateChanged(
+        auth,
+        (firebaseUser) => {
+            user.set(firebaseUser);
+            isLoading.set(false);
+        },
+        (error) => {
+            console.error('Auth state error:', error);
+            authError.set(error.message);
+            isLoading.set(false);
+        }
+    );
+
+    return unsubscribe;
 }
 
-// Initial state
-const initialState: AuthState = {
-    user: null,
-    loading: true,
-    error: null
-};
+// Sign in with email and password
+export async function signIn(email: string, password: string): Promise<void> {
+    try {
+        authError.set(null);
+        isLoading.set(true);
 
-// Define the shape of our store
-export interface AuthStore {
-    subscribe: Readable<AuthState>['subscribe'];
-    signUp: (email: string, password: string) => Promise<UserCredential>;
-    signIn: (email: string, password: string) => Promise<UserCredential>;
-    signInWithGoogle: () => Promise<UserCredential>;
-    signOut: () => Promise<void>;
-    resetPassword: (email: string) => Promise<void>;
-    updateUserProfile: (displayName?: string, photoURL?: string) => Promise<void>;
+        const auth = getAuth();
+        await signInWithEmailAndPassword(auth, email, password);
+
+        // Auth state listener will update the user store
+    } catch (error) {
+        console.error('Sign in error:', error);
+        if (error instanceof Error) {
+            authError.set(error.message);
+        } else {
+            authError.set('An unknown error occurred');
+        }
+        isLoading.set(false);
+        throw error;
+    }
 }
 
-/**
- * Creates an authentication store with Firebase authentication
- * @param auth - Firebase auth instance
- * @returns An enhanced store with auth methods
- */
-export function createAuthStore(auth: Auth): AuthStore {
-    const authStore = writable<AuthState>(initialState);
+// Sign up with email and password
+export async function signUp(email: string, password: string): Promise<void> {
+    try {
+        authError.set(null);
+        isLoading.set(true);
 
-    // Initialize auth state listener when in browser environment
-    if (browser) {
-        const unsubscribe = onAuthStateChanged(
-            auth,
-            (user) => {
-                authStore.update(state => ({ ...state, user, loading: false }));
-            },
-            (error) => {
-                console.error('Auth state error:', error);
-                authStore.update(state => ({ ...state, error: error.message, loading: false }));
-            }
-        );
+        const auth = getAuth();
+        await createUserWithEmailAndPassword(auth, email, password);
+
+        // Auth state listener will update the user store
+    } catch (error) {
+        console.error('Sign up error:', error);
+        if (error instanceof Error) {
+            authError.set(error.message);
+        } else {
+            authError.set('An unknown error occurred');
+        }
+        isLoading.set(false);
+        throw error;
+    }
+}
+
+// Sign out
+export async function signOut(): Promise<void> {
+    try {
+        const auth = getAuth();
+        await firebaseSignOut(auth);
+
+        // Auth state listener will update the user store
+    } catch (error) {
+        console.error('Sign out error:', error);
+        if (error instanceof Error) {
+            authError.set(error.message);
+        } else {
+            authError.set('An unknown error occurred');
+        }
+        throw error;
+    }
+}
+
+// Mock sign in for testing (use only in development)
+export async function mockSignIn(): Promise<void> {
+    if (process.env.NODE_ENV !== 'development') {
+        console.warn('Mock sign in is only available in development mode');
+        return;
     }
 
-    // Auth methods
-    const signUp = async (email: string, password: string): Promise<UserCredential> => {
-        authStore.update(state => ({ ...state, loading: true, error: null }));
-        try {
-            const credential = await createUserWithEmailAndPassword(auth, email, password);
-            return credential;
-        } catch (error: any) {
-            const errorMessage = error?.message || 'Failed to sign up';
-            authStore.update(state => ({ ...state, error: errorMessage, loading: false }));
-            throw error;
-        }
-    };
+    try {
+        // Create a mock user object
+        const mockUser = {
+            uid: 'test-user-123',
+            email: 'test@example.com',
+            displayName: 'Test User',
+            emailVerified: true,
+        } as User;
 
-    const signIn = async (email: string, password: string): Promise<UserCredential> => {
-        authStore.update(state => ({ ...state, loading: true, error: null }));
-        try {
-            const credential = await signInWithEmailAndPassword(auth, email, password);
-            return credential;
-        } catch (error: any) {
-            const errorMessage = error?.message || 'Failed to sign in';
-            authStore.update(state => ({ ...state, error: errorMessage, loading: false }));
-            throw error;
-        }
-    };
+        // Update the store directly (bypassing Firebase)
+        user.set(mockUser);
+        isLoading.set(false);
 
-    const signInWithGoogle = async (): Promise<UserCredential> => {
-        authStore.update(state => ({ ...state, loading: true, error: null }));
-        try {
-            const provider = new GoogleAuthProvider();
-            const credential = await signInWithPopup(auth, provider);
-            return credential;
-        } catch (error: any) {
-            const errorMessage = error?.message || 'Failed to sign in with Google';
-            authStore.update(state => ({ ...state, error: errorMessage, loading: false }));
-            throw error;
-        }
-    };
+        // Store in localStorage to persist across page reloads
+        localStorage.setItem('mockUser', JSON.stringify(mockUser));
 
-    const signOut = async (): Promise<void> => {
-        try {
-            await firebaseSignOut(auth);
-        } catch (error: any) {
-            const errorMessage = error?.message || 'Failed to sign out';
-            authStore.update(state => ({ ...state, error: errorMessage }));
-            throw error;
+    } catch (error) {
+        console.error('Mock sign in error:', error);
+        if (error instanceof Error) {
+            authError.set(error.message);
+        } else {
+            authError.set('An unknown error occurred');
         }
-    };
-
-    const resetPassword = async (email: string): Promise<void> => {
-        authStore.update(state => ({ ...state, loading: true, error: null }));
-        try {
-            await sendPasswordResetEmail(auth, email);
-        } catch (error: any) {
-            const errorMessage = error?.message || 'Failed to reset password';
-            authStore.update(state => ({ ...state, error: errorMessage, loading: false }));
-            throw error;
-        } finally {
-            authStore.update(state => ({ ...state, loading: false }));
-        }
-    };
-
-    const updateUserProfile = async (displayName?: string, photoURL?: string): Promise<void> => {
-        authStore.update(state => ({ ...state, loading: true, error: null }));
-        try {
-            if (!auth.currentUser) {
-                throw new Error('No authenticated user');
-            }
-            await updateProfile(auth.currentUser, {
-                displayName: displayName || auth.currentUser.displayName,
-                photoURL: photoURL || auth.currentUser.photoURL
-            });
-            // Force update store to reflect changes
-            authStore.update(state => ({ ...state, user: auth.currentUser }));
-        } catch (error: any) {
-            const errorMessage = error?.message || 'Failed to update profile';
-            authStore.update(state => ({ ...state, error: errorMessage }));
-            throw error;
-        } finally {
-            authStore.update(state => ({ ...state, loading: false }));
-        }
-    };
-
-    return {
-        subscribe: authStore.subscribe,
-        signUp,
-        signIn,
-        signInWithGoogle,
-        signOut,
-        resetPassword,
-        updateUserProfile
-    };
+        throw error;
+    }
 }
 
-// Helper derived stores with proper typing
-export function isAuthenticated(authStore: AuthStore): Readable<boolean> {
-    return derived<Readable<AuthState>, boolean>(
-        authStore as unknown as Readable<AuthState>,
-        ($state) => $state.user !== null
-    );
-}
+// Check for mock user on initialization in development
+export function initMockAuth() {
+    if (!browser || process.env.NODE_ENV !== 'development') return;
 
-export function isAdmin(authStore: AuthStore): Readable<boolean> {
-    return derived<Readable<AuthState>, boolean>(
-        authStore as unknown as Readable<AuthState>,
-        ($state) => {
-            // Check for custom claims - requires Firebase Functions to be set up
-            // This is just a placeholder until you implement custom claims
-            return $state.user?.email?.endsWith('@contentcal.ai') || false;
+    const mockUserJson = localStorage.getItem('mockUser');
+    if (mockUserJson) {
+        try {
+            const mockUser = JSON.parse(mockUserJson) as User;
+            user.set(mockUser);
+        } catch (e) {
+            console.error('Error parsing mock user from localStorage', e);
+            localStorage.removeItem('mockUser');
         }
-    );
+    }
+
+    isLoading.set(false);
 }

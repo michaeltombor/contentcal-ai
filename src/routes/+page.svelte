@@ -1,23 +1,34 @@
 <!-- src/routes/+page.svelte -->
-<script>
+<script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { user } from '$lib/stores/authStore';
-  
+  import { user, isLoading } from '$lib/stores/authStore';
+
   onMount(() => {
-    // Redirect to appropriate page based on auth state
-    const unsubscribe = user.subscribe(userData => {
-      if (userData) {
-        goto('/dashboard');
+    // Redirect to calendar if authenticated, otherwise to login
+    if (!$isLoading) {
+      if ($user) {
+        goto('/calendar');
       } else {
-        goto('/auth');
+        goto('/login');
       }
-    });
-    
-    return unsubscribe;
+    }
   });
+  
+  // Also redirect when auth state changes
+  $: if (!$isLoading) {
+    if ($user) {
+      goto('/calendar');
+    } else {
+      goto('/login');
+    }
+  }
 </script>
 
-<div class="h-screen flex items-center justify-center bg-gray-50">
-  <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+<div class="min-h-screen flex items-center justify-center bg-gray-50">
+  <div class="text-center">
+    <h1 class="text-3xl font-extrabold text-gray-900 mb-4">ContentCal.AI</h1>
+    <div class="inline-block animate-spin h-8 w-8 border-4 border-gray-200 rounded-full border-t-blue-600 mb-4"></div>
+    <p class="text-gray-600">Loading...</p>
+  </div>
 </div>
