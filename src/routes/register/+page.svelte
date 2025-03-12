@@ -1,12 +1,15 @@
 <script lang="ts">
-  import { signInWithEmail, signInWithGoogle, isAuthenticated } from '$lib/services/authService';
+  import { registerWithEmail, signInWithGoogle, isAuthenticated } from '$lib/services/authService';
   import { goto } from '$app/navigation';
   import Button from '$lib/components/Button.svelte';
   import { onMount } from 'svelte';
 
   let email = '';
   let password = '';
+  let confirmPassword = '';
+  let displayName = '';
   let errorMessage = '';
+  let successMessage = '';
   let isSubmitting = false;
 
   onMount(() => {
@@ -23,18 +26,45 @@
   async function handleSubmit() {
     try {
       errorMessage = '';
+      successMessage = '';
       isSubmitting = true;
       
-      if (!email || !password) {
-        errorMessage = 'Please enter both email and password';
+      // Validate inputs
+      if (!email || !password || !confirmPassword || !displayName) {
+        errorMessage = 'Please fill in all fields';
         return;
       }
       
-      await signInWithEmail(email, password);
-      goto('/calendar');
+      if (password !== confirmPassword) {
+        errorMessage = 'Passwords do not match';
+        return;
+      }
+      
+      if (password.length < 6) {
+        errorMessage = 'Password must be at least 6 characters long';
+        return;
+      }
+      
+      // Register user
+      await registerWithEmail(email, password, displayName);
+      
+      // Show success message
+      successMessage = 'Registration successful! Please check your email to verify your account.';
+      
+      // Reset form
+      email = '';
+      password = '';
+      confirmPassword = '';
+      displayName = '';
+      
+      // Redirect after a delay
+      setTimeout(() => {
+        goto('/login');
+      }, 3000);
+      
     } catch (error) {
-      console.error('Login error:', error);
-      errorMessage = 'Invalid email or password. Please try again.';
+      console.error('Registration error:', error);
+      errorMessage = 'Error creating account. This email may already be in use.';
     } finally {
       isSubmitting = false;
     }
@@ -59,11 +89,11 @@
   <div class="max-w-md w-full space-y-8">
     <div>
       <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
-        Sign in to ContentCal.AI
+        Create your account
       </h2>
       <p class="mt-2 text-center text-sm text-gray-600">
-        Or <a href="/register" class="font-medium text-blue-600 hover:text-blue-500">
-          create a new account
+        Or <a href="/login" class="font-medium text-blue-600 hover:text-blue-500">
+          sign in to your existing account
         </a>
       </p>
     </div>
@@ -74,8 +104,27 @@
       </div>
     {/if}
 
+    {#if successMessage}
+      <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative">
+        {successMessage}
+      </div>
+    {/if}
+
     <form class="mt-8 space-y-6" on:submit|preventDefault={handleSubmit}>
       <div class="rounded-md shadow-sm -space-y-px">
+        <div>
+          <label for="display-name" class="sr-only">Display name</label>
+          <input
+            id="display-name"
+            name="displayName"
+            type="text"
+            required
+            bind:value={displayName}
+            class="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+            placeholder="Display name"
+            disabled={isSubmitting}
+          />
+        </div>
         <div>
           <label for="email-address" class="sr-only">Email address</label>
           <input
@@ -85,7 +134,7 @@
             autocomplete="email"
             required
             bind:value={email}
-            class="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+            class="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
             placeholder="Email address"
             disabled={isSubmitting}
           />
@@ -96,33 +145,27 @@
             id="password"
             name="password"
             type="password"
-            autocomplete="current-password"
+            autocomplete="new-password"
             required
             bind:value={password}
-            class="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+            class="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
             placeholder="Password"
             disabled={isSubmitting}
           />
         </div>
-      </div>
-
-      <div class="flex items-center justify-between">
-        <div class="flex items-center">
+        <div>
+          <label for="confirm-password" class="sr-only">Confirm password</label>
           <input
-            id="remember-me"
-            name="remember-me"
-            type="checkbox"
-            class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+            id="confirm-password"
+            name="confirmPassword"
+            type="password"
+            autocomplete="new-password"
+            required
+            bind:value={confirmPassword}
+            class="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+            placeholder="Confirm password"
+            disabled={isSubmitting}
           />
-          <label for="remember-me" class="ml-2 block text-sm text-gray-900">
-            Remember me
-          </label>
-        </div>
-
-        <div class="text-sm">
-          <a href="/forgot-password" class="font-medium text-blue-600 hover:text-blue-500">
-            Forgot your password?
-          </a>
         </div>
       </div>
 
@@ -133,7 +176,7 @@
           fullWidth={true}
           disabled={isSubmitting}
         >
-          {isSubmitting ? 'Signing in...' : 'Sign in'}
+          {isSubmitting ? 'Creating account...' : 'Create account'}
         </Button>
       </div>
     </form>
@@ -160,7 +203,7 @@
             src="https://www.svgrepo.com/show/475656/google-color.svg"
             alt="Google logo"
           />
-          Sign in with Google
+          Sign up with Google
         </button>
       </div>
     </div>
