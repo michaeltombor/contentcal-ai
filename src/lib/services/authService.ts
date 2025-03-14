@@ -21,7 +21,7 @@ export const isLoading = writable(true);
 
 // Initialize auth state listener
 export function initAuth() {
-    if (!browser) return;
+    if (!browser || !auth) return;
 
     // Listen for auth state changes
     const unsubscribe = auth.onAuthStateChanged((user) => {
@@ -34,6 +34,8 @@ export function initAuth() {
 
 // Register a new user with email and password
 export async function registerWithEmail(email: string, password: string, displayName: string): Promise<UserCredential> {
+    if (!auth) throw new Error('Firebase auth is not initialized.');
+
     try {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
 
@@ -52,6 +54,8 @@ export async function registerWithEmail(email: string, password: string, display
 
 // Sign in with email and password
 export async function signInWithEmail(email: string, password: string): Promise<UserCredential> {
+    if (!auth) throw new Error('Firebase auth is not initialized.');
+
     try {
         return await signInWithEmailAndPassword(auth, email, password);
     } catch (error) {
@@ -62,6 +66,8 @@ export async function signInWithEmail(email: string, password: string): Promise<
 
 // Sign in with Google
 export async function signInWithGoogle(): Promise<UserCredential> {
+    if (!auth) throw new Error('Firebase auth is not initialized.');
+
     try {
         const provider = new GoogleAuthProvider();
         return await signInWithPopup(auth, provider);
@@ -93,6 +99,8 @@ export async function resetPassword(email: string): Promise<void> {
 
 // Update user profile
 export async function updateUserProfile(displayName: string, photoURL?: string): Promise<void> {
+    if (!auth) throw new Error('Firebase auth is not initialized.');
+
     try {
         const user = auth.currentUser;
         if (!user) throw new Error('User not authenticated');
@@ -102,7 +110,11 @@ export async function updateUserProfile(displayName: string, photoURL?: string):
         // Update the store
         userStore.update(currentUser => {
             if (currentUser) {
-                return { ...currentUser, displayName, photoURL };
+                return {
+                    ...currentUser,
+                    displayName,
+                    photoURL: photoURL ?? null // Ensure photoURL is string | null
+                };
             }
             return currentUser;
         });

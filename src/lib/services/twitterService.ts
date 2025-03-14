@@ -56,7 +56,7 @@ interface ServiceResponse<T = unknown> {
 
 interface TwitterPostOptions {
     media?: {
-        media_ids: [string] | [string, string] | [string, string, string] | [string, string, string, string];
+        media_ids: string[];
     };
 }
 

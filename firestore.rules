@@ -1,101 +1,219 @@
-// firestore.rules
 
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    // Function to check if the user is authenticated
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-    
-    // Function to check if the user is the owner of the document
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-    
-    // Function to check if all required post fields are present and valid
-    function isValidPost(post) {
-      return post.size() >= 6 
-        && 'content' in post && post.content is string
-        && 'userId' in post && post.userId is string
-        && 'platforms' in post && post.platforms is list
-        && 'scheduledTime' in post && post.scheduledTime is timestamp
-        && 'status' in post && post.status is string
-        && 'createdAt' in post && post.createdAt is timestamp
-        && 'updatedAt' in post && post.updatedAt is timestamp;
-    }
-    
-    // Function to verify update operation only changes allowed fields
-    function isValidPostUpdate(post) {
-      // Must not change the userId
-      return !('userId' in post) ||
-        (resource.data.userId == post.userId) &&
-        // Required fields must still be valid if present
-        (!('platforms' in post) || post.platforms is list) &&
-        (!('status' in post) || post.status is string) &&
-        (!('scheduledTime' in post) || post.scheduledTime is timestamp) &&
-        (!('content' in post) || post.content is string);
-    }
-    
-    // Posts collection rules
-    match /posts/{postId} {
-      // Allow read if the user is authenticated and owns the post
-      allow read: if isAuthenticated() && 
-                    resource.data.userId == request.auth.uid;
-      
-      // Allow create if the user is authenticated, userId matches, and post is valid
-      allow create: if isAuthenticated() && 
-                     request.resource.data.userId == request.auth.uid &&
-                     isValidPost(request.resource.data);
-      
-      // Allow update if the user owns the post and the update is valid
-      allow update: if isOwner(resource.data.userId) &&
-                     isValidPostUpdate(request.resource.data);
-      
-      // Allow delete if the user owns the post
-      allow delete: if isOwner(resource.data.userId);
-    }
-    
-    // User-specific settings and preferences
-    match /users/{userId} {
-      // Only the user can read or write their own data
-      allow read, write: if isOwner(userId);
-      
-      // User's calendar settings
-      match /calendarSettings/{settingId} {
+// firestore.rules
+  rules_version = '2';
+  service cloud.firestore {
+    match /databases/{database
+    }/documents {
+        // Function to check if user is authenticated
+      function isAuthenticated() {
+        return request.auth != null;
+        }
+        // Function to check if user is the owner of a document
+      function isOwner(userId) {
+        return isAuthenticated() && request.auth.uid == userId;
+        }
+        // Match all user documents
+      match /users/{userId
+        } {
+            // Users can only read and write their own profile
         allow read, write: if isOwner(userId);
-      }
+        
+        // Allow creating user document for themselves
+        allow create: if isAuthenticated() && request.auth.uid == userId &&
+                       request.resource.data.keys().hasOnly(['email', 'displayName', 'photoURL', 'createdAt', 'updatedAt', 'preferences'
+            ]) &&
+                       request.resource.data.email is string &&
+                       request.resource.data.email == request.auth.token.email;
+        }
+        // Match all post documents
+      match /posts/{postId
+        } {
+            // Only post owners can read their posts
+        allow read: if isAuthenticated() && 
+                     request.auth.uid == resource.data.userId;
+        
+        // Only post owners can create posts for themselves
+        allow create: if isAuthenticated() && 
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.keys().hasAny(['title', 'content', 'scheduledTime', 'platform', 'userId', 'status'
+            ]) &&
+                       request.resource.data.userId is string &&
+                       request.resource.data.content is string &&
+                       request.resource.data.scheduledTime is string &&
+                       request.resource.data.platform in ['twitter', 'facebook', 'instagram', 'linkedin'
+            ] &&
+                       request.resource.data.status in ['draft', 'scheduled', 'published', 'failed'
+            ];
+        
+        // Only post owners can update their posts
+        allow update: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid &&
+                       request.resource.data.userId == request.auth.uid;
+        
+        // Only post owners can delete their posts
+        allow delete: if isAuthenticated() && 
+                       resource.data.userId == request.auth.uid;
+        }
+        // Match all user preferences documents
+      match /userPreferences/{userId
+        } {
+            // Users can only read and write their own preferences
+        allow read, write: if isOwner(userId);
+        }
+        // Match all analytics documents
+      match /analytics/{docId
+        } {
+            // Analytics are user-specific
+        allow read: if isAuthenticated() && 
+                     resource.data.userId == request.auth.uid;
+        
+        // Only owners can write their analytics
+        allow write: if isAuthenticated() && 
+                      request.resource.data.userId == request.auth.uid;
+        }
+        // Default deny all rule
+      match /{document=**
+        } {
+        allow read, write: if false;
+        }
     }
-    
-    // Analytics data (read-only for the user)
-    match /analytics/{userId} {
-      allow read: if isOwner(userId);
-      allow write: if false; // Only backend can write analytics
-      
-      // Individual analytic records
-      match /records/{recordId} {
-        allow read: if isOwner(userId);
-      }
+}
+// storage.rules
+  rules_version = '2';
+  service firebase.storage {
+    match /b/{bucket
+    }/o {
+        // Function to check if user is authenticated
+      function isAuthenticated() {
+        return request.auth != null;
+        }
+        // Function to check file size (max 10MB)
+      function isValidFileSize() {
+        return request.resource.size <= 10 * 1024 * 1024;
+        }
+        // Function to check file type (for media uploads)
+      function isValidContentType() {
+        return request.resource.contentType.matches('image/.*') || 
+               request.resource.contentType.matches('video/.*');
+        }
+        // Match user's media folder
+      match /users/{userId
+        }/media/{mediaId
+        } {
+            // Only allow users to access their own media
+        allow read: if isAuthenticated() && 
+                     request.auth.uid == userId;
+        
+        // Only allow users to upload to their own folder with valid media
+        allow create: if isAuthenticated() && 
+                       request.auth.uid == userId &&
+                       isValidFileSize() &&
+                       isValidContentType();
+        
+        // Only allow users to update their own media
+        allow update: if isAuthenticated() && 
+                       request.auth.uid == userId &&
+                       isValidFileSize() &&
+                       isValidContentType();
+        
+        // Only allow users to delete their own media
+        allow delete: if isAuthenticated() && 
+                       request.auth.uid == userId;
+        }
+        // Match post attachments
+      match /posts/{postId
+        }/attachments/{fileName
+        } {
+            // Allow read if user owns the post
+        allow read: if isAuthenticated();
+        
+        // Allow create if user is authenticated and file is valid
+        allow create: if isAuthenticated() &&
+                       isValidFileSize() &&
+                       isValidContentType();
+        
+        // Allow update if user owns the post and file is valid
+        allow update: if isAuthenticated() &&
+                       isValidFileSize() &&
+                       isValidContentType();
+        
+        // Allow delete if user owns the post
+        allow delete: if isAuthenticated();
+        }
+        // Default deny all rule
+      match /{allPaths=**
+        } {
+        allow read, write: if false;
+        }
     }
-    
-    // Platform connections (social media API keys, tokens, etc.)
-    match /platformConnections/{userId} {
-      allow read: if isOwner(userId);
-      
-      // Only allow updates to specific fields, not entire document replacement
-      allow update: if isOwner(userId) && 
-                     request.resource.data.keys().hasOnly(resource.data.keys());
-                     
-      // Individual platform connections
-      match /platforms/{platformId} {
-        allow read: if isOwner(userId);
-        allow write: if isOwner(userId);
-      }
-    }
-    
-    // Default deny all other requests
-    match /{document=**} {
-      allow read, write: if false;
-    }
-  }
+}
+// firestore.indexes.json
+{
+    "indexes": [
+        {
+            "collectionGroup": "posts",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "userId",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "scheduledTime",
+                    "order": "ASCENDING"
+                }
+            ]
+        },
+        {
+            "collectionGroup": "posts",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "userId",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "status",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "scheduledTime",
+                    "order": "ASCENDING"
+                }
+            ]
+        },
+        {
+            "collectionGroup": "posts",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "userId",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "platform",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "scheduledTime",
+                    "order": "ASCENDING"
+                }
+            ]
+        },
+        {
+            "collectionGroup": "analytics",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "userId",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "date",
+                    "order": "DESCENDING"
+                }
+            ]
+        }
+    ],
+    "fieldOverrides": []
 }

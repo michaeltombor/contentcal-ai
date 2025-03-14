@@ -1,273 +1,236 @@
 // src/lib/services/aiService.ts
+import type { ContentPrompt, ContentSuggestion, UserAIPreferences } from '$lib/types/AIContent';
+// Update environment variable name to match your actual env var
+// Make sure you've defined this in your .env file
+import { VITE_CLAUDE_API_KEY } from '$env/static/private'; // Adjust this to match your actual env var name
 
-import { getAuth } from 'firebase/auth';
-import {
-    getFirestore,
-    collection,
-    query,
-    where,
-    orderBy,
-    limit,
-    getDocs
-} from 'firebase/firestore';
-import { httpsCallable, getFunctions } from 'firebase/functions';
-import type { SocialMediaPost, PlatformType } from '$lib/types/calendar';
-import { writable, type Writable } from 'svelte/store';
+const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 
-// Store for AI recommendations
-export const aiRecommendations: Writable<{
-    content: string[];
-    bestTimes: { platform: PlatformType; day: string; time: string }[];
-    hashtags: string[];
-    isLoading: boolean;
-}> = writable({
-    content: [],
-    bestTimes: [],
-    hashtags: [],
-    isLoading: false
-});
-
-// Get the best posting times based on user engagement data
-export async function getBestPostingTimes(): Promise<{ platform: PlatformType; day: string; time: string }[]> {
-    try {
-        const auth = getAuth();
-        const userId = auth.currentUser?.uid;
-
-        if (!userId) {
-            throw new Error('User not authenticated');
-        }
-
-        // Set loading state
-        aiRecommendations.update(state => ({ ...state, isLoading: true }));
-
-        // Call the Firebase Cloud Function
-        const functions = getFunctions();
-        const getBestTimesFunction = httpsCallable(functions, 'getBestPostingTimes');
-        const result = await getBestTimesFunction({ userId });
-
-        // The result data is in result.data
-        const bestTimes = result.data as { platform: PlatformType; day: string; time: string }[];
-
-        // Update the store
-        aiRecommendations.update(state => ({
-            ...state,
-            bestTimes,
-            isLoading: false
-        }));
-
-        return bestTimes;
-    } catch (error) {
-        console.error('Error getting best posting times:', error);
-
-        // Update the store with error state
-        aiRecommendations.update(state => ({ ...state, isLoading: false }));
-
-        // Return fallback data
-        return [
-            { platform: 'twitter', day: 'Wednesday', time: '12:00 PM' },
-            { platform: 'instagram', day: 'Saturday', time: '9:00 AM' },
-            { platform: 'facebook', day: 'Sunday', time: '3:00 PM' },
-            { platform: 'linkedin', day: 'Tuesday', time: '8:00 AM' }
-        ];
-    }
-}
-
-// Get popular hashtags based on user's niche
-export async function getPopularHashtags(niche: string = ''): Promise<string[]> {
-    try {
-        const auth = getAuth();
-        const userId = auth.currentUser?.uid;
-
-        if (!userId) {
-            throw new Error('User not authenticated');
-        }
-
-        // Set loading state
-        aiRecommendations.update(state => ({ ...state, isLoading: true }));
-
-        // Call the Firebase Cloud Function
-        const functions = getFunctions();
-        const getHashtagsFunction = httpsCallable(functions, 'getPopularHashtags');
-        const result = await getHashtagsFunction({ userId, niche });
-
-        // The result data is in result.data
-        const hashtags = result.data as string[];
-
-        // Update the store
-        aiRecommendations.update(state => ({
-            ...state,
-            hashtags,
-            isLoading: false
-        }));
-
-        return hashtags;
-    } catch (error) {
-        console.error('Error getting popular hashtags:', error);
-
-        // Update the store with error state
-        aiRecommendations.update(state => ({ ...state, isLoading: false }));
-
-        // Return fallback data
-        return [
-            'contentmarketing', 'socialmediatips', 'digitalmarketing',
-            'growthhacking', 'marketing', 'business', 'entrepreneur',
-            'contentcreation', 'contentcalendar', 'scheduling'
-        ];
-    }
-}
-
-// Generate AI content suggestions based on user's previous posts and industry
+/**
+ * Generate content suggestions using Claude API
+ */
 export async function generateContentSuggestions(
-    prompt: string = '',
-    platforms: PlatformType[] = ['twitter']
-): Promise<string[]> {
+    prompt: ContentPrompt,
+    count: number = 3
+): Promise<ContentSuggestion[]> {
     try {
-        const auth = getAuth();
-        const userId = auth.currentUser?.uid;
+        // Create a structured prompt for Claude
+        const systemPrompt = createSystemPrompt(prompt, count);
 
-        if (!userId) {
-            throw new Error('User not authenticated');
-        }
-
-        // Set loading state
-        aiRecommendations.update(state => ({ ...state, isLoading: true }));
-
-        // Get the user's previous posts to analyze their style
-        const db = getFirestore();
-        const postsQuery = query(
-            collection(db, 'posts'),
-            where('userId', '==', userId),
-            where('status', '==', 'published'),
-            orderBy('updatedAt', 'desc'),
-            limit(20)
-        );
-
-        const postsSnapshot = await getDocs(postsQuery);
-        const previousPosts = postsSnapshot.docs.map(doc => doc.data() as SocialMediaPost);
-
-        // Call the Firebase Cloud Function
-        const functions = getFunctions();
-        const generateContentFunction = httpsCallable(functions, 'generateContentSuggestions');
-        const result = await generateContentFunction({
-            userId,
-            prompt,
-            platforms,
-            previousPosts: previousPosts.length > 0 ? previousPosts : undefined
+        // Call Claude API
+        const response = await fetch(CLAUDE_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': VITE_CLAUDE_API_KEY,
+                'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+                model: 'claude-3-sonnet-20240229',
+                max_tokens: 1000,
+                system: systemPrompt,
+                messages: [
+                    {
+                        role: 'user',
+                        content: createUserPrompt(prompt)
+                    }
+                ]
+            })
         });
 
-        // The result data is in result.data
-        const suggestions = result.data as string[];
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`API error: ${errorData.error?.message || 'Unknown error'}`);
+        }
 
-        // Update the store
-        aiRecommendations.update(state => ({
-            ...state,
-            content: suggestions,
-            isLoading: false
-        }));
+        const data = await response.json();
 
-        return suggestions;
+        // Parse the response to extract suggestions
+        return parseClaudeResponse(data.content[0].text, prompt.platform);
     } catch (error) {
         console.error('Error generating content suggestions:', error);
-
-        // Update the store with error state
-        aiRecommendations.update(state => ({ ...state, isLoading: false }));
-
-        // Return fallback data based on platforms
-        if (platforms.includes('twitter')) {
-            return [
-                "Just published our latest blog post on content marketing strategies for 2025! Check it out and let me know your thoughts. #ContentMarketing #DigitalStrategy",
-                "Looking for ways to improve your social media presence? Here are 3 simple techniques that helped our clients increase engagement by 45% this quarter.",
-                "Happy Friday! What are your content marketing goals for the coming week? Share below and let's inspire each other. #FridayThoughts #ContentGoals"
-            ];
-        } else if (platforms.includes('linkedin')) {
-            return [
-                "Excited to announce our latest case study: How we helped a SaaS startup increase their conversion rate by 32% through strategic content calendar management. #SaaS #ContentStrategy",
-                "The future of content marketing isn't just about creating more content—it's about creating the RIGHT content for the RIGHT audience at the RIGHT time.",
-                "Three trends reshaping social media marketing in 2025:\n\n1. AI-powered content personalization\n2. Micro-community engagement\n3. Cross-platform storytelling\n\nWhich one are you implementing in your strategy?"
-            ];
-        } else {
-            return [
-                "New feature alert! 🚀 We've just launched our AI content recommendation engine to help you create more engaging posts with less effort. #ProductUpdate #ContentCalAI",
-                "Beautiful sunrise this morning has us feeling inspired! What's motivating you to create great content today? #MondayMotivation #ContentCreation",
-                "Behind the scenes at our product demo today! So excited to show how ContentCal.AI can revolutionize your social media workflow. #BehindTheScenes #SocialMediaTools"
-            ];
-        }
-    }
-}
-
-// Analyze post performance to provide content improvement suggestions
-export async function analyzePostPerformance(postId: string): Promise<{
-    score: number;
-    improvements: string[];
-    bestTimeToRepost: { day: string; time: string };
-}> {
-    try {
-        const auth = getAuth();
-        const userId = auth.currentUser?.uid;
-
-        if (!userId) {
-            throw new Error('User not authenticated');
-        }
-
-        // Call the Firebase Cloud Function
-        const functions = getFunctions();
-        const analyzePostFunction = httpsCallable(functions, 'analyzePostPerformance');
-        const result = await analyzePostFunction({ userId, postId });
-
-        // Return the analysis
-        return result.data as {
-            score: number;
-            improvements: string[];
-            bestTimeToRepost: { day: string; time: string };
-        };
-    } catch (error) {
-        console.error('Error analyzing post performance:', error);
-
-        // Return fallback data
-        return {
-            score: 72,
-            improvements: [
-                'Try adding more engaging questions to increase comments',
-                'Consider including 1-2 relevant hashtags for better reach',
-                'Posts with images typically get 38% more engagement'
-            ],
-            bestTimeToRepost: { day: 'Thursday', time: '5:30 PM' }
-        };
-    }
-}
-
-// Generate an entire content calendar for a specified period
-export async function generateContentCalendar(
-    startDate: Date,
-    endDate: Date,
-    frequency: number = 3, // posts per week
-    platforms: PlatformType[] = ['twitter', 'linkedin'],
-    topics: string[] = []
-): Promise<SocialMediaPost[]> {
-    try {
-        const auth = getAuth();
-        const userId = auth.currentUser?.uid;
-
-        if (!userId) {
-            throw new Error('User not authenticated');
-        }
-
-        // Call the Firebase Cloud Function
-        const functions = getFunctions();
-        const generateCalendarFunction = httpsCallable(functions, 'generateContentCalendar');
-        const result = await generateCalendarFunction({
-            userId,
-            startDate,
-            endDate,
-            frequency,
-            platforms,
-            topics
-        });
-
-        // Return the generated posts
-        return result.data as SocialMediaPost[];
-    } catch (error) {
-        console.error('Error generating content calendar:', error);
         throw error;
+    }
+}
+
+/**
+ * Create a system prompt for Claude API
+ */
+function createSystemPrompt(prompt: ContentPrompt, count: number): string {
+    return `You are an expert social media content creator specializing in creating engaging content for ${prompt.platform}.
+Your task is to generate ${count} unique content suggestions based on the user's requirements.
+
+PLATFORM SPECIFICATIONS:
+${getPlatformSpecs(prompt.platform)}
+
+CONTENT GUIDELINES:
+- Tone: ${prompt.tone || 'professional'}
+- Length: ${getContentLengthSpec(prompt.length || 'medium', prompt.platform)}
+- Target audience: ${prompt.audience || 'general'}
+${prompt.userPreferences ? getUserPreferencesGuide(prompt.userPreferences) : ''}
+
+RESPONSE FORMAT:
+Provide exactly ${count} content suggestions in the following JSON format:
+\`\`\`json
+[
+  {
+    "title": "Short title for the post",
+    "content": "The full post content",
+    "tags": ["hashtag1", "hashtag2", "..."],
+    "platform": "${prompt.platform}",
+    "confidence": 0.95
+  },
+  {
+    "title": "Another title",
+    "content": "Another post content",
+    "tags": ["hashtag1", "hashtag2", "..."],
+    "platform": "${prompt.platform}",
+    "confidence": 0.85
+  }
+]
+\`\`\`
+
+Do not include any explanations, just return the JSON.`;
+}
+
+/**
+ * Create a user prompt for Claude API
+ */
+function createUserPrompt(prompt: ContentPrompt): string {
+    let userPrompt = `Generate ${prompt.platform} content`;
+
+    if (prompt.topic) {
+        userPrompt += ` about ${prompt.topic}`;
+    }
+
+    if (prompt.keywords && prompt.keywords.length > 0) {
+        userPrompt += ` incorporating the following keywords: ${prompt.keywords.join(', ')}`;
+    }
+
+    return userPrompt;
+}
+
+/**
+ * Get platform-specific constraints and best practices
+ */
+function getPlatformSpecs(platform: string): string {
+    switch (platform) {
+        case 'twitter':
+            return `- Maximum 280 characters
+- Hashtags are important but use no more than 3
+- Short, punchy content works best
+- Questions and calls-to-action drive engagement
+- Links should be meaningful but can be mentioned as "link in bio"`;
+
+        case 'facebook':
+            return `- Optimal length is 1-2 paragraphs
+- Can include links, but don't overdo it
+- Engagement questions work well
+- Hashtags should be limited (1-2 maximum)
+- Personal stories and relatable content perform best`;
+
+        case 'instagram':
+            return `- Captions can be longer, but keep them concise and engaging
+- Hashtags are very important (suggest 5-10 relevant ones)
+- Emoji usage is appropriate and encouraged
+- Calls-to-action like "double tap if you agree" or "tag someone who..." work well
+- The content should be visual-friendly and mention the image implicitly`;
+
+        case 'linkedin':
+            return `- Professional tone
+- Industry insights, thought leadership, and valuable information
+- Paragraphs should be short for readability
+- Minimal hashtag usage (3-5 relevant, industry-specific tags)
+- Longer content is acceptable, especially if providing value`;
+
+        default:
+            return `- Keep content concise and engaging
+- Include appropriate hashtags
+- Ensure content is relevant to the platform
+- Call-to-actions boost engagement`;
+    }
+}
+
+/**
+ * Get content length specification based on platform and requested length
+ */
+function getContentLengthSpec(length: string, platform: string): string {
+    if (platform === 'twitter') {
+        return length === 'long' ? 'Use full 280 character limit' :
+            length === 'short' ? 'Keep under 150 characters' :
+                'Around 200-240 characters';
+    }
+
+    switch (length) {
+        case 'short':
+            return 'One brief paragraph (2-3 sentences)';
+        case 'long':
+            return '3-4 paragraphs with detailed information';
+        case 'medium':
+        default:
+            return '1-2 paragraphs with complete thoughts';
+    }
+}
+
+/**
+ * Extract user preferences as guidance
+ */
+function getUserPreferencesGuide(preferences: UserAIPreferences): string {
+    let guide = '';
+
+    if (preferences.preferredTopics && preferences.preferredTopics.length > 0) {
+        guide += `- Focus on these topics: ${preferences.preferredTopics.join(', ')}\n`;
+    }
+
+    if (preferences.avoidTopics && preferences.avoidTopics.length > 0) {
+        guide += `- Avoid these topics: ${preferences.avoidTopics.join(', ')}\n`;
+    }
+
+    if (preferences.maxHashtags !== undefined) {
+        guide += `- Use no more than ${preferences.maxHashtags} hashtags\n`;
+    }
+
+    if (preferences.includeEmojis !== undefined) {
+        guide += preferences.includeEmojis
+            ? '- Include appropriate emojis in the content\n'
+            : '- Avoid using emojis\n';
+    }
+
+    if (preferences.contentStyle) {
+        guide += `- Content style should be: ${preferences.contentStyle}\n`;
+    }
+
+    return guide;
+}
+
+/**
+ * Parse Claude API response to extract content suggestions
+ */
+function parseClaudeResponse(responseText: string, platform: string): ContentSuggestion[] {
+    try {
+        // Extract JSON from the response using regex to find content between ```json and ```
+        const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
+
+        if (jsonMatch && jsonMatch[1]) {
+            // Parse the JSON
+            const suggestions = JSON.parse(jsonMatch[1]) as ContentSuggestion[];
+
+            // Ensure all suggestions have the correct platform
+            return suggestions.map(suggestion => ({
+                ...suggestion,
+                platform: platform as 'twitter' | 'facebook' | 'instagram' | 'linkedin'
+            }));
+        }
+
+        // If no JSON is found in the expected format, try to parse the entire response as JSON
+        try {
+            return JSON.parse(responseText) as ContentSuggestion[];
+        } catch (innerError) {
+            console.error('Error parsing direct JSON:', innerError);
+            throw new Error('Failed to parse content suggestions from AI response');
+        }
+    } catch (error) {
+        console.error('Error parsing AI response:', error);
+        throw new Error('Failed to parse content suggestions from AI response');
     }
 }

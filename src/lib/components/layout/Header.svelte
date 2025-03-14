@@ -4,7 +4,7 @@
   import { getContext } from 'svelte';
   import { goto } from '$app/navigation';
   import type { AuthStore } from '$lib/stores/authStore';
-  import { toast } from '$lib/stores/toastStore';
+  import { toastStore } from '$lib/stores/toastStore';
   
   export let isLoggedIn = false;
   
@@ -49,11 +49,11 @@
   async function handleSignOut() {
     try {
       await auth.signOut();
-      toast.success('Successfully signed out');
+      toastStore.success('Successfully signed out');
       goto('/');
     } catch (error) {
       console.error('Sign out error:', error);
-      toast.error('Failed to sign out');
+      toastStore.error('Failed to sign out');
     }
   }
 </script>

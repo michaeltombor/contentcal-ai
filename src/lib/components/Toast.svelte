@@ -1,11 +1,11 @@
-<!-- src/lib/components/Toast.svelte -->
+<!-- src/lib/components/toastStore.svelte -->
 <script lang="ts">
-  import { toast } from '$lib/stores/toastStore';
+  import { toastStore } from '$lib/stores/toastStore';
   import { fly } from 'svelte/transition';
 </script>
 
-<div class="toast-container">
-  {#each $toast as t (t.id)}
+<div class="toastStore-container">
+  {#each $toastStore as t (t.id)}
     <div
       class="toast-item {t.type}"
       transition:fly={{ x: 100, duration: 300 }}
@@ -13,7 +13,7 @@
       <div class="toast-content">
         <span>{t.message}</span>
       </div>
-      <button class="toast-close" on:click={() => toast.remove(t.id)}>×</button>
+      <button class="toast-close" on:click={() => toastStore.remove(t.id)}>×</button>
     </div>
   {/each}
 </div>

@@ -1,60 +1,62 @@
 // src/lib/stores/toastStore.ts
-// Move toast functionality to a store file (not a route file)
-
 import { writable } from 'svelte/store';
+
+export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
 export interface Toast {
     id: string;
     message: string;
-    type: 'success' | 'error' | 'info' | 'warning';
-    timeout: number;
+    type: ToastType;
+    timeout?: number; // Auto-dismiss timeout in milliseconds
 }
 
 function createToastStore() {
     const { subscribe, update } = writable<Toast[]>([]);
 
-    function add(toast: Omit<Toast, 'id'>) {
-        const id = Date.now().toString();
-        update(toasts => [{ ...toast, id }, ...toasts]);
+    function addToast(message: string, type: ToastType = 'info', timeout: number = 3000): string {
+        const id = Math.random().toString(36).substring(2, 9);
 
-        if (toast.timeout) {
+        update(toasts => [...toasts, { id, message, type, timeout }]);
+
+        if (timeout) {
             setTimeout(() => {
-                remove(id);
-            }, toast.timeout);
+                removeToast(id);
+            }, timeout);
         }
 
         return id;
     }
 
-    function remove(id: string) {
-        update(toasts => toasts.filter(t => t.id !== id));
+    function removeToast(id: string): void {
+        update(toasts => toasts.filter(toast => toast.id !== id));
     }
 
-    function success(message: string, timeout = 3000) {
-        return add({ message, type: 'success', timeout });
+    function success(message: string, timeout: number = 3000): string {
+        return addToast(message, 'success', timeout);
     }
 
-    function error(message: string, timeout = 3000) {
-        return add({ message, type: 'error', timeout });
+    function error(message: string, timeout: number = 5000): string {
+        return addToast(message, 'error', timeout);
     }
 
-    function info(message: string, timeout = 3000) {
-        return add({ message, type: 'info', timeout });
+    function info(message: string, timeout: number = 3000): string {
+        return addToast(message, 'info', timeout);
     }
 
-    function warning(message: string, timeout = 3000) {
-        return add({ message, type: 'warning', timeout });
+    function warning(message: string, timeout: number = 4000): string {
+        return addToast(message, 'warning', timeout);
     }
 
     return {
         subscribe,
-        add,
-        remove,
+        add: addToast,
+        remove: removeToast,
         success,
         error,
         info,
-        warning
+        warning,
+        clear: () => update(() => [])
     };
 }
 
-export const toast = createToastStore();
+export const toastStore = createToastStore();
