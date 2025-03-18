@@ -1,30 +1,31 @@
 // src/lib/types/calendar.ts
 
+// Platform types
 export type PlatformType = 'twitter' | 'instagram' | 'facebook' | 'linkedin';
 
+// Post status types
 export type PostStatus = 'draft' | 'scheduled' | 'published' | 'failed';
 
+// Interface for social media posts
 export interface SocialMediaPost {
     id: string;
     userId: string;
     content: string;
-    mediaUrls?: string[];
-    platforms: PlatformType[];
     scheduledTime: Date;
+    platforms: PlatformType[];
+    mediaUrls?: string[];
+    hashtags?: string[];
     status: PostStatus;
     createdAt: Date;
     updatedAt: Date;
-    hashtags?: string[];
-    aiGenerated?: boolean;
-    engagement?: {
-        likes: number;
-        shares: number;
-        comments: number;
-        clicks: number;
+    analytics?: {
+        impressions?: number;
+        engagements?: number;
+        clicks?: number;
     };
-    metadata?: Record<string, unknown>;
 }
 
+// Interface for calendar events (derived from posts)
 export interface CalendarEvent {
     id: string;
     postId: string;
@@ -37,15 +38,17 @@ export interface CalendarEvent {
     userId: string;
 }
 
+// Calendar view state interface
 export interface CalendarViewState {
     currentView: 'day' | 'week' | 'month';
     currentDate: Date;
     selectedEvent?: CalendarEvent;
     selectedPost?: SocialMediaPost;
-    isCreatingEvent: boolean;
     draggedEvent?: CalendarEvent;
+    isCreatingEvent: boolean;
 }
 
+// Calendar filters interface
 export interface CalendarFilters {
     platforms: PlatformType[];
     status: PostStatus[];

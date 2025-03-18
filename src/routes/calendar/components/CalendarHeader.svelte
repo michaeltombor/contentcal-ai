@@ -1,45 +1,91 @@
 <!-- src/routes/calendar/components/CalendarHeader.svelte -->
 <script lang="ts">
+  // Instead of using the functions passed as props, we'll directly import and use the store
+  import { calendarViewState } from '$lib/stores/calendarStore';
+  
   export let date: Date;
   export let view: 'day' | 'week' | 'month';
+  
+  // Define these props but we won't use them (to maintain compatibility)
   export let navigateToToday: () => void;
   export let navigateToPrevious: () => void;
   export let navigateToNext: () => void;
   export let changeView: (view: 'day' | 'week' | 'month') => void;
   
-  // Format header title based on current view
-  $: title = formatHeaderTitle(date, view);
+  // Local functions that directly update the store
+  function localNavigateToToday() {
+    calendarViewState.set({
+      ...$calendarViewState,
+      currentDate: new Date()
+    });
+  }
   
-  function formatHeaderTitle(date: Date, view: string): string {
+  function localNavigateToPrevious() {
+    const current = new Date(date);
+    
     if (view === 'day') {
+      current.setDate(current.getDate() - 1);
+    } else if (view === 'week') {
+      current.setDate(current.getDate() - 7);
+    } else {
+      current.setMonth(current.getMonth() - 1);
+    }
+    
+    calendarViewState.set({
+      ...$calendarViewState,
+      currentDate: current
+    });
+  }
+  
+  function localNavigateToNext() {
+    const current = new Date(date);
+    
+    if (view === 'day') {
+      current.setDate(current.getDate() + 1);
+    } else if (view === 'week') {
+      current.setDate(current.getDate() + 7);
+    } else {
+      current.setMonth(current.getMonth() + 1);
+    }
+    
+    calendarViewState.set({
+      ...$calendarViewState,
+      currentDate: current
+    });
+  }
+  
+  function localChangeView(newView: 'day' | 'week' | 'month') {
+    calendarViewState.set({
+      ...$calendarViewState,
+      currentView: newView
+    });
+  }
+  
+  // Format date for display
+  $: formattedDate = formatDate(date, view);
+  
+  function formatDate(date: Date, viewType: string): string {
+    if (viewType === 'day') {
       return date.toLocaleDateString(undefined, { 
         weekday: 'long',
         month: 'long', 
-        day: 'numeric', 
-        year: 'numeric' 
+        day: 'numeric',
+        year: 'numeric'
       });
-    } else if (view === 'week') {
-      // Get the start and end of the week
+    } else if (viewType === 'week') {
       const startOfWeek = new Date(date);
-      const day = startOfWeek.getDay();
-      startOfWeek.setDate(startOfWeek.getDate() - day);
+      const dayOfWeek = startOfWeek.getDay();
+      startOfWeek.setDate(date.getDate() - dayOfWeek);
       
       const endOfWeek = new Date(startOfWeek);
-      endOfWeek.setDate(endOfWeek.getDate() + 6);
+      endOfWeek.setDate(startOfWeek.getDate() + 6);
       
-      // Format the date range
       if (startOfWeek.getMonth() === endOfWeek.getMonth()) {
-        // Same month
         return `${startOfWeek.toLocaleDateString(undefined, { month: 'long' })} ${startOfWeek.getDate()} - ${endOfWeek.getDate()}, ${startOfWeek.getFullYear()}`;
-      } else if (startOfWeek.getFullYear() === endOfWeek.getFullYear()) {
-        // Different months, same year
-        return `${startOfWeek.toLocaleDateString(undefined, { month: 'short' })} ${startOfWeek.getDate()} - ${endOfWeek.toLocaleDateString(undefined, { month: 'short' })} ${endOfWeek.getDate()}, ${startOfWeek.getFullYear()}`;
       } else {
-        // Different years
-        return `${startOfWeek.toLocaleDateString(undefined, { month: 'short' })} ${startOfWeek.getDate()}, ${startOfWeek.getFullYear()} - ${endOfWeek.toLocaleDateString(undefined, { month: 'short' })} ${endOfWeek.getDate()}, ${endOfWeek.getFullYear()}`;
+        return `${startOfWeek.toLocaleDateString(undefined, { month: 'short' })} ${startOfWeek.getDate()} - ${endOfWeek.toLocaleDateString(undefined, { month: 'short' })} ${endOfWeek.getDate()}, ${endOfWeek.getFullYear()}`;
       }
     } else {
-      // Month view
       return date.toLocaleDateString(undefined, { 
         month: 'long', 
         year: 'numeric' 
@@ -48,74 +94,58 @@
   }
 </script>
 
-<header class="bg-white border-b p-4 sticky top-0 z-20">
-  <div class="max-w-full mx-auto">
-    <div class="flex items-center justify-between">
-      <!-- Title and Navigation -->
-      <div class="flex items-center space-x-4">
-        <h1 class="text-xl font-bold">{title}</h1>
-        
-        <div class="flex items-center space-x-2">
-          <button 
-            class="p-2 rounded-full hover:bg-gray-100" 
-            on:click={navigateToPrevious}
-            aria-label="Previous"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd" />
-            </svg>
-          </button>
-          
-          <button 
-            class="p-2 rounded-full hover:bg-gray-100" 
-            on:click={navigateToNext}
-            aria-label="Next"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" />
-            </svg>
-          </button>
-          
-          <button 
-            class="px-3 py-1 text-sm bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100" 
-            on:click={navigateToToday}
-          >
-            Today
-          </button>
-        </div>
-      </div>
-      
-      <!-- View Controls -->
-      <div class="flex items-center space-x-2 bg-gray-100 rounded-lg p-1">
-        <button 
-          class="px-3 py-1 text-sm rounded-md {view === 'day' ? 'bg-white shadow text-blue-600' : 'hover:bg-gray-200'}" 
-          on:click={() => changeView('day')}
-        >
-          Day
-        </button>
-        <button 
-          class="px-3 py-1 text-sm rounded-md {view === 'week' ? 'bg-white shadow text-blue-600' : 'hover:bg-gray-200'}" 
-          on:click={() => changeView('week')}
-        >
-          Week
-        </button>
-        <button 
-          class="px-3 py-1 text-sm rounded-md {view === 'month' ? 'bg-white shadow text-blue-600' : 'hover:bg-gray-200'}" 
-          on:click={() => changeView('month')}
-        >
-          Month
-        </button>
-      </div>
-      
-      <!-- Create Event Button -->
+<div class="flex justify-between items-center py-3 px-4 border-b bg-white">
+  <div class="flex items-center space-x-2">
+    <button 
+      class="p-1.5 rounded hover:bg-gray-100"
+      on:click={localNavigateToPrevious}
+      aria-label="Previous"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd" />
+      </svg>
+    </button>
+    
+    <h2 class="text-xl font-medium">{formattedDate}</h2>
+    
+    <button 
+      class="p-1.5 rounded hover:bg-gray-100"
+      on:click={localNavigateToNext}
+      aria-label="Next"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+      </svg>
+    </button>
+    
+    <button 
+      class="ml-2 px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50"
+      on:click={localNavigateToToday}
+    >
+      Today
+    </button>
+  </div>
+  
+  <div class="flex items-center space-x-2">
+    <div class="bg-gray-100 rounded-md p-1 inline-flex">
       <button 
-        class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center"
+        class="px-3 py-1 text-sm rounded-md {view === 'day' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'}"
+        on:click={() => localChangeView('day')}
       >
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-        </svg>
-        New Post
+        Day
+      </button>
+      <button 
+        class="px-3 py-1 text-sm rounded-md {view === 'week' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'}"
+        on:click={() => localChangeView('week')}
+      >
+        Week
+      </button>
+      <button 
+        class="px-3 py-1 text-sm rounded-md {view === 'month' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'}"
+        on:click={() => localChangeView('month')}
+      >
+        Month
       </button>
     </div>
   </div>
-</header>
+</div>

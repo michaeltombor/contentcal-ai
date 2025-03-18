@@ -1,7 +1,7 @@
 <script lang="ts">
   import { signInWithEmail, signInWithGoogle, isAuthenticated } from '$lib/services/authService';
   import { goto } from '$app/navigation';
-  import Button from '$lib/components/Button.svelte';
+  import Button from '$lib/components/common/Button.svelte';
   import { onMount } from 'svelte';
 
   let email = '';

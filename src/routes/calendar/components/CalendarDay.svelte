@@ -1,170 +1,261 @@
-<!-- src/routes/calendar/components/CalendarDay.svelte -->
+<!-- src/routes/calendar/components/Calendar.svelte -->
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
+  import { 
+    calendarViewState, 
+    filteredEvents
+  } from '$lib/stores/calendarStore';
+  import { 
+    postStore,
+    postStoreLoading
+  } from '$lib/stores/postStore';
   import type { CalendarEvent } from '$lib/types/calendar';
+  import CalendarDay from './CalendarDay.svelte';
+  import CalendarWeek from './CalendarWeek.svelte';
+  import CalendarMonth from './CalendarMonth.svelte';
+  import CalendarHeader from './CalendarHeader.svelte';
+  import CalendarSidebar from './CalendarSidebar.svelte';
+  import PostEditor from './PostEditor.svelte';
+  import CalendarLoading from './CalendarLoading.svelte';
+  import ToastContainer from '$lib/components/common/ToastContainer.svelte';
+  import { fade } from 'svelte/transition';
+
+  export let openCreateModal: (date?: Date) => void;
+
+  // Loading state
+  let isLoading = true;
+
+  // Track mouse position for drag preview
+  let mouseX = 0;
+  let mouseY = 0;
   
-  export let date: Date;
-  export let events: CalendarEvent[];
-  export let selectEvent: (event: CalendarEvent) => void;
-  export let startDrag: (event: CalendarEvent) => void;
-  export let handleDrop: (date: Date, allDay: boolean) => Promise<void>;
+  const updateMousePosition = (event: MouseEvent) => {
+    mouseX = event.clientX;
+    mouseY = event.clientY;
+  };
+
+  // Handle date click for creating new posts
+  function handleDateClick(date: Date) {
+    openCreateModal(date);
+  }
   
-  // Filter events for the current day
-  $: dayEvents = events.filter(event => 
-    event.start.toDateString() === date.toDateString()
-  );
+  // Handle the add button click
+  function handleAddButtonClick() {
+    // Call the openCreateModal function with current date
+    openCreateModal(new Date());
+  }
   
-  // Generate time slots (1 hour intervals from 0:00 to 23:00)
-  const HOURS = Array.from({ length: 24 }, (_, i) => i);
+  // Direct implementation of the functions to avoid import issues
   
-  // Format hour for display
-  function formatHour(hour: number): string {
-    return new Date(0, 0, 0, hour).toLocaleTimeString([], { 
-      hour: 'numeric', 
-      hour12: true 
+  // Select event function
+  function localSelectEvent(event: CalendarEvent) {
+    calendarViewState.set({
+      ...$calendarViewState,
+      selectedEvent: event,
+      // Find and select the corresponding post
+      selectedPost: $postStore.posts.find(post => post.id === event.postId)
     });
   }
   
-  // Position events in the time grid
-  function getEventPosition(event: CalendarEvent): { top: number, height: number } {
-    const startHour = event.start.getHours();
-    const startMinute = event.start.getMinutes();
-    const endHour = event.end.getHours();
-    const endMinute = event.end.getMinutes();
-    
-    const top = (startHour * 60 + startMinute) / 1440 * 100; // % of day
-    const duration = ((endHour * 60 + endMinute) - (startHour * 60 + startMinute)) / 1440 * 100; // % of day
-    
-    // Ensure minimum height for visibility
-    const height = Math.max(duration, 2);
-    
-    return { top, height };
+  // Clear selection function
+  function localClearSelection() {
+    calendarViewState.set({
+      ...$calendarViewState,
+      selectedEvent: undefined,
+      selectedPost: undefined
+    });
   }
   
-  // Handle drag events
-  function handleDragStart(event: DragEvent, calendarEvent: CalendarEvent) {
-    const element = event.target as HTMLElement;
-    element.style.opacity = '0.5';
-    
-    // Store the event data
-    startDrag(calendarEvent);
-    
-    // Set minimal data for HTML5 drag-drop API
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', calendarEvent.id);
+  // Start drag function
+  function localStartDrag(event: CalendarEvent) {
+    calendarViewState.set({
+      ...$calendarViewState,
+      draggedEvent: event
+    });
+  }
+  
+  // End drag function
+  function localEndDrag() {
+    calendarViewState.set({
+      ...$calendarViewState,
+      draggedEvent: undefined
+    });
+  }
+  
+  // Handle drop function
+  async function localHandleDrop(date: Date, allDay: boolean = false) {
+    const state = $calendarViewState;
+    if (!state.draggedEvent) return;
+
+    try {
+      // Calculate new time while preserving hours and minutes if not all day
+      const newDate = new Date(date);
+      if (!allDay) {
+        const originalDate = state.draggedEvent.start;
+        newDate.setHours(originalDate.getHours());
+        newDate.setMinutes(originalDate.getMinutes());
+      } else {
+        // If dropped as all-day event, set to beginning of day
+        newDate.setHours(9, 0, 0, 0); // Default to 9 AM
+      }
+
+      // Use the postStore reschedulePost function
+      await postStore.reschedulePost(state.draggedEvent.postId, newDate);
+      
+      // Show success toast if you have a toast system
+      // toastStore.success('Post rescheduled successfully');
+
+      localEndDrag();
+    } catch (error) {
+      console.error('Error handling drop:', error);
+      // Show error toast if you have a toast system
+      // toastStore.error('Failed to reschedule post');
     }
   }
   
-  // Handle drag over for drop zones
-  function handleDragOver(event: DragEvent, hour: number, minute: number = 0) {
+  // Handle window drag events to ensure we clean up on drop outside
+  function handleWindowDragOver(event: DragEvent) {
+    // Allow dropping anywhere in the window
     event.preventDefault();
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = 'move';
     }
   }
   
-  // Handle drop on a time slot
-  async function onDrop(event: DragEvent, hour: number, minute: number = 0) {
+  function handleWindowDrop(event: DragEvent) {
+    // If dropped outside a valid drop zone, cancel the drag operation
     event.preventDefault();
-    const dropDate = new Date(date);
-    dropDate.setHours(hour, minute, 0, 0);
-    await handleDrop(dropDate, false);
+    localEndDrag();
   }
-  
-  // Calculate Y coordinate from mouse event for more precise drops
-  function getTimeFromMouseY(event: MouseEvent, element: HTMLElement): { hour: number, minute: number } {
-    const rect = element.getBoundingClientRect();
-    const y = event.clientY - rect.top;
-    const percentage = y / rect.height;
+
+  // Dummy functions to pass to CalendarHeader (it now handles these internally)
+  const dummyNavigate = () => {};
+  const dummyChangeView = (_view: any) => {};
+
+  onMount(() => {
+    // Load posts if not already loaded
+    if (!$postStore.loading && $postStore.posts.length === 0) {
+      postStore.loadPosts();
+    }
     
-    // Convert percentage to hours and minutes (24 hours = 1440 minutes)
-    const totalMinutes = percentage * 1440;
-    const hour = Math.floor(totalMinutes / 60);
-    const minute = Math.round(totalMinutes % 60);
+    // Set loading to false after data has loaded
+    const unsubscribeLoading = postStoreLoading.subscribe(loading => {
+      // Add a small delay to ensure UI transitions are smooth
+      if (!loading) {
+        setTimeout(() => {
+          isLoading = false;
+        }, 500);
+      } else {
+        isLoading = true;
+      }
+    });
     
-    return { hour, minute };
-  }
-  
-  // Handle click on time grid to allow event creation at specific time
-  function onTimeGridClick(event: MouseEvent) {
-    const target = event.currentTarget as HTMLElement;
-    const { hour, minute } = getTimeFromMouseY(event, target);
+    // Add event listeners for global drag and drop
+    window.addEventListener('dragover', handleWindowDragOver);
+    window.addEventListener('drop', handleWindowDrop);
     
-    // TODO: Create new event at this time
-    console.log(`Create event at ${hour}:${minute}`);
-  }
+    return () => {
+      if (unsubscribeLoading) unsubscribeLoading();
+      window.removeEventListener('dragover', handleWindowDragOver);
+      window.removeEventListener('drop', handleWindowDrop);
+    };
+  });
 </script>
 
-<div class="flex flex-col h-full overflow-hidden">
-  <!-- Header with day name and date -->
-  <div class="p-4 border-b text-center">
-    <h2 class="text-xl font-semibold">
-      {date.toLocaleDateString(undefined, { weekday: 'long' })}
-    </h2>
-    <p class="text-gray-500">
-      {date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
-    </p>
-  </div>
-  
-  <!-- Day timeline with events -->
-  <div class="flex flex-1 overflow-y-auto">
-    <!-- Time labels -->
-    <div class="w-16 flex-shrink-0 border-r border-gray-200 bg-gray-50">
-      {#each HOURS as hour}
-        <div class="h-16 text-xs text-gray-500 text-right pr-2 -mt-2">
-          {formatHour(hour)}
-        </div>
-      {/each}
+<svelte:window on:mousemove={updateMousePosition} />
+
+<div class="flex h-screen flex-col bg-gray-50">
+  <!-- Show loading state -->
+  {#if isLoading}
+    <div in:fade={{ duration: 200 }} out:fade={{ duration: 200 }}>
+      <CalendarLoading />
     </div>
-    
-    <!-- Time grid with events -->
-    <div 
-      class="flex-1 relative"
-      on:click={onTimeGridClick}
-    >
-      <!-- Hour grid lines -->
-      {#each HOURS as hour}
-        <div 
-          class="h-16 border-b border-gray-200 relative"
-          on:dragover={(e) => handleDragOver(e, hour)}
-          on:drop={(e) => onDrop(e, hour)}
-        ></div>
-      {/each}
+  {:else}
+    <div class="flex h-full flex-col">
+      <!-- Calendar Header with navigation and view controls -->
+      <CalendarHeader 
+        date={$calendarViewState.currentDate} 
+        view={$calendarViewState.currentView}
+        navigateToToday={dummyNavigate}
+        navigateToPrevious={dummyNavigate}
+        navigateToNext={dummyNavigate}
+        changeView={dummyChangeView}
+      />
       
-      <!-- Current time indicator -->
-      {#if date.toDateString() === new Date().toDateString()}
-        {@const now = new Date()}
-        {@const currentTimeTop = (now.getHours() * 60 + now.getMinutes()) / 1440 * 100}
+      <div class="flex flex-1 overflow-hidden">
+        <!-- Sidebar with filters and quick add -->
+        <CalendarSidebar />
+        
+        <!-- Main calendar area -->
+        <div class="flex-1 overflow-auto p-4">
+          <div class="bg-white rounded-lg shadow-md h-full">
+            {#if $calendarViewState.currentView === 'day'}
+              <CalendarDay 
+                date={$calendarViewState.currentDate} 
+                events={$filteredEvents}
+                selectEvent={localSelectEvent}
+                startDrag={localStartDrag}
+                handleDrop={localHandleDrop}
+                onTimeClick={handleDateClick}
+              />
+            {:else if $calendarViewState.currentView === 'week'}
+              <CalendarWeek 
+                startDate={$calendarViewState.currentDate} 
+                events={$filteredEvents}
+                selectEvent={localSelectEvent}
+                startDrag={localStartDrag}
+                handleDrop={localHandleDrop}
+                onTimeClick={handleDateClick}
+              />
+            {:else}
+              <CalendarMonth 
+                date={$calendarViewState.currentDate} 
+                events={$filteredEvents}
+                selectEvent={localSelectEvent}
+                startDrag={localStartDrag}
+                handleDrop={localHandleDrop}
+                onDayClick={handleDateClick}
+              />
+            {/if}
+          </div>
+        </div>
+        
+        <!-- Post editor sidebar when an event is selected -->
+        {#if $calendarViewState.selectedEvent && $calendarViewState.selectedPost}
+          <div class="w-1/4 border-l border-gray-200 overflow-auto">
+            <PostEditor 
+              post={$calendarViewState.selectedPost} 
+              onClose={localClearSelection} 
+            />
+          </div>
+        {/if}
+      </div>
+      
+      <!-- Drag preview that follows mouse when dragging -->
+      {#if $calendarViewState.draggedEvent}
         <div 
-          class="absolute left-0 right-0 border-t-2 border-red-500 z-10"
-          style="top: {currentTimeTop}%;"
+          class="fixed pointer-events-none z-50 bg-white rounded shadow-md px-2 py-1 border-l-4"
+          style="left: {mouseX + 10}px; top: {mouseY + 10}px; border-left-color: {$calendarViewState.draggedEvent.platformColor};"
         >
-          <div class="absolute -top-2 -left-1 w-2 h-2 bg-red-500 rounded-full"></div>
+          <p class="text-xs font-medium truncate max-w-xs">
+            {$calendarViewState.draggedEvent.title}
+          </p>
+          <p class="text-xs text-gray-500">
+            {$calendarViewState.draggedEvent.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+          </p>
         </div>
       {/if}
       
-      <!-- Events -->
-      {#each dayEvents as event}
-        {@const position = getEventPosition(event)}
-        <div 
-          class="absolute left-1 right-1 rounded p-2 shadow-sm cursor-pointer overflow-hidden"
-          style="
-            top: {position.top}%; 
-            height: {position.height}%; 
-            background-color: {event.platformColor}20; 
-            border-left: 3px solid {event.platformColor};
-          "
-          draggable="true"
-          on:dragstart={(e) => handleDragStart(e, event)}
-          on:click={() => selectEvent(event)}
-        >
-          <div class="text-sm font-medium truncate">{event.title}</div>
-          <div class="text-xs">
-            {event.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - 
-            {event.end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-          </div>
-        </div>
-      {/each}
+      <!-- Add post button (fixed) -->
+      <button 
+        class="fixed right-6 bottom-6 z-30 bg-blue-600 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-lg hover:bg-blue-700"
+        on:click={handleAddButtonClick}
+        aria-label="Create New Post"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+        </svg>
+      </button>
     </div>
-  </div>
+  {/if}
 </div>

@@ -8,6 +8,12 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWith
 export const user = writable<User | null>(null);
 export const isLoading = writable(true);
 export const authError = writable<string | null>(null);
+export const authStore = writable({
+    user: null,
+    loading: true,
+    error: null
+});
+
 
 // Initialize auth state listener
 export function initAuth() {

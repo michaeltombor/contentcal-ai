@@ -1,7 +1,15 @@
 <!-- src/routes/calendar/components/CalendarSidebar.svelte -->
 <script lang="ts">
-  import { calendarFilters, updatePlatformFilters, updateStatusFilters, clearFilters } from '$lib/stores/calendarStore';
+  import { calendarViewState } from '$lib/stores/calendarStore';
   import type { PlatformType, PostStatus } from '$lib/types/calendar';
+  import { writable } from 'svelte/store';
+  
+  // Create a local filter store for now (until we fix the imports)
+  const filters = writable({
+    platforms: ['twitter', 'instagram', 'facebook', 'linkedin'] as PlatformType[],
+    status: ['draft', 'scheduled', 'published', 'failed'] as PostStatus[],
+    searchTerm: ''
+  });
   
   // Platform options
   const platformOptions: { id: PlatformType; label: string; color: string }[] = [
@@ -22,36 +30,59 @@
   // Handle platform filter changes
   function handlePlatformFilterChange(platform: PlatformType) {
     // Toggle the platform in the filter
-    if ($calendarFilters.platforms.includes(platform)) {
-      // Remove the platform
-      const updatedPlatforms = $calendarFilters.platforms.filter(p => p !== platform);
-      updatePlatformFilters(updatedPlatforms);
-    } else {
-      // Add the platform
-      const updatedPlatforms = [...$calendarFilters.platforms, platform];
-      updatePlatformFilters(updatedPlatforms);
-    }
+    filters.update(state => {
+      if (state.platforms.includes(platform)) {
+        // Remove the platform
+        return {
+          ...state,
+          platforms: state.platforms.filter(p => p !== platform)
+        };
+      } else {
+        // Add the platform
+        return {
+          ...state,
+          platforms: [...state.platforms, platform]
+        };
+      }
+    });
   }
   
   // Handle status filter changes
   function handleStatusFilterChange(status: PostStatus) {
     // Toggle the status in the filter
-    if ($calendarFilters.status.includes(status)) {
-      // Remove the status
-      const updatedStatus = $calendarFilters.status.filter(s => s !== status);
-      updateStatusFilters(updatedStatus);
-    } else {
-      // Add the status
-      const updatedStatus = [...$calendarFilters.status, status];
-      updateStatusFilters(updatedStatus);
-    }
+    filters.update(state => {
+      if (state.status.includes(status)) {
+        // Remove the status
+        return {
+          ...state,
+          status: state.status.filter(s => s !== status)
+        };
+      } else {
+        // Add the status
+        return {
+          ...state,
+          status: [...state.status, status]
+        };
+      }
+    });
+  }
+  
+  // Reset filters
+  function resetFilters() {
+    filters.set({
+      platforms: ['twitter', 'instagram', 'facebook', 'linkedin'],
+      status: ['draft', 'scheduled', 'published', 'failed'],
+      searchTerm: ''
+    });
   }
   
   // Handle search input
   function handleSearchInput(event: Event) {
     const input = event.target as HTMLInputElement;
-    // TODO: Implement search functionality
-    console.log('Search:', input.value);
+    filters.update(state => ({
+      ...state,
+      searchTerm: input.value
+    }));
   }
 </script>
 
@@ -65,7 +96,7 @@
             <input 
               type="checkbox" 
               class="rounded text-blue-600 focus:ring-blue-500 h-4 w-4 mr-2"
-              checked={$calendarFilters.platforms.includes(platform.id)}
+              checked={$filters.platforms.includes(platform.id)}
               on:change={() => handlePlatformFilterChange(platform.id)}
             />
             <div 
@@ -86,7 +117,7 @@
             <input 
               type="checkbox" 
               class="rounded text-blue-600 focus:ring-blue-500 h-4 w-4 mr-2"
-              checked={$calendarFilters.status.includes(status.id)}
+              checked={$filters.status.includes(status.id)}
               on:change={() => handleStatusFilterChange(status.id)}
             />
             <div 
@@ -105,6 +136,7 @@
         type="text" 
         placeholder="Search content..." 
         class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+        value={$filters.searchTerm}
         on:input={handleSearchInput}
       />
     </div>
@@ -112,7 +144,7 @@
     <div class="mb-4">
       <button 
         class="w-full px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
-        on:click={clearFilters}
+        on:click={resetFilters}
       >
         Reset Filters
       </button>

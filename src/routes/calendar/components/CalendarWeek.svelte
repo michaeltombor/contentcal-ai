@@ -7,67 +7,12 @@
   export let selectEvent: (event: CalendarEvent) => void;
   export let startDrag: (event: CalendarEvent) => void;
   export let handleDrop: (date: Date, allDay: boolean) => Promise<void>;
+  export let onTimeClick: (date: Date) => void;
   
-  // Generate days for the week
+  // Generate days for this week
   $: weekDays = generateWeekDays(startDate);
-  // Filter events for the current week
-  $: weekEvents = filterEventsByWeek(events, weekDays[0], weekDays[6]);
-  // Group events by day for display
-  $: eventsByDay = groupEventsByDay(weekEvents, weekDays);
   
-  // Generate week days
-  function generateWeekDays(startDate: Date): Date[] {
-    // Find the start of the week (Sunday)
-    const startOfWeek = new Date(startDate);
-    const day = startOfWeek.getDay();
-    startOfWeek.setDate(startOfWeek.getDate() - day);
-    
-    // Generate days for the week
-    const days: Date[] = [];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(startOfWeek);
-      date.setDate(date.getDate() + i);
-      days.push(date);
-    }
-    
-    return days;
-  }
-  
-  // Filter events for the current week
-  function filterEventsByWeek(events: CalendarEvent[], startDay: Date, endDay: Date): CalendarEvent[] {
-    // Set time to beginning and end of days
-    const start = new Date(startDay);
-    start.setHours(0, 0, 0, 0);
-    
-    const end = new Date(endDay);
-    end.setHours(23, 59, 59, 999);
-    
-    return events.filter(event => 
-      event.start >= start && event.start <= end
-    );
-  }
-  
-  // Group events by day for display
-  function groupEventsByDay(events: CalendarEvent[], days: Date[]): Record<string, CalendarEvent[]> {
-    const groupedEvents: Record<string, CalendarEvent[]> = {};
-    
-    // Initialize empty arrays for each day
-    days.forEach(day => {
-      groupedEvents[day.toDateString()] = [];
-    });
-    
-    // Add events to appropriate days
-    events.forEach(event => {
-      const dayKey = event.start.toDateString();
-      if (groupedEvents[dayKey]) {
-        groupedEvents[dayKey].push(event);
-      }
-    });
-    
-    return groupedEvents;
-  }
-  
-  // Generate time slots (1 hour intervals from 0:00 to 23:00)
+  // Generate time slots
   const HOURS = Array.from({ length: 24 }, (_, i) => i);
   
   // Format hour for display
@@ -78,23 +23,33 @@
     });
   }
   
-  // Format day for display
-  function formatDay(date: Date): string {
-    return date.toLocaleDateString(undefined, { 
-      weekday: 'short', 
-      day: 'numeric' 
-    });
+  // Generate week days starting from startDate
+  function generateWeekDays(start: Date): Date[] {
+    const days = [];
+    const startOfWeek = new Date(start);
+    
+    // Adjust to get the start of the week (Sunday)
+    const diff = startOfWeek.getDay();
+    startOfWeek.setDate(startOfWeek.getDate() - diff);
+    
+    // Generate 7 days
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(startOfWeek);
+      day.setDate(day.getDate() + i);
+      days.push(day);
+    }
+    
+    return days;
   }
   
-  // Check if date is today
-  function isToday(date: Date): boolean {
-    const today = new Date();
-    return date.getDate() === today.getDate() &&
-           date.getMonth() === today.getMonth() &&
-           date.getFullYear() === today.getFullYear();
+  // Filter events for a specific day
+  function getEventsForDay(date: Date): CalendarEvent[] {
+    return events.filter(event => 
+      event.start.toDateString() === date.toDateString()
+    );
   }
   
-  // Position events in the time grid
+  // Get position for an event in the time grid
   function getEventPosition(event: CalendarEvent): { top: number, height: number } {
     const startHour = event.start.getHours();
     const startMinute = event.start.getMinutes();
@@ -110,119 +65,187 @@
     return { top, height };
   }
   
+  // Check if a date is today
+  function isToday(date: Date): boolean {
+    const today = new Date();
+    return date.getDate() === today.getDate() &&
+           date.getMonth() === today.getMonth() &&
+           date.getFullYear() === today.getFullYear();
+  }
+  
   // Handle drag events
   function handleDragStart(event: DragEvent, calendarEvent: CalendarEvent) {
+    if (!event.dataTransfer) return;
+    
     const element = event.target as HTMLElement;
     element.style.opacity = '0.5';
     
-    // Store the event data
+    // Set visual drag effect
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', calendarEvent.id);
+    
+    // Store the event data in store
     startDrag(calendarEvent);
     
-    // Set minimal data for HTML5 drag-drop API
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', calendarEvent.id);
-    }
+    // Stop event propagation
+    event.stopPropagation();
   }
   
-  // Handle drag over for drop zones
-  function handleDragOver(event: DragEvent, date: Date, hour: number) {
+  // Handle drag end
+  function handleDragEnd(event: DragEvent) {
+    const element = event.target as HTMLElement;
+    element.style.opacity = '1';
+  }
+  
+  // Handle drag over for time slots
+  function handleDragOver(event: DragEvent) {
     event.preventDefault();
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = 'move';
     }
+    
+    // Add visual feedback
+    const element = event.currentTarget as HTMLElement;
+    element.classList.add('bg-blue-50', 'border-blue-200');
+  }
+  
+  // Handle drag leave for time slots
+  function handleDragLeave(event: DragEvent) {
+    const element = event.currentTarget as HTMLElement;
+    element.classList.remove('bg-blue-50', 'border-blue-200');
   }
   
   // Handle drop on a time slot
   async function onDrop(event: DragEvent, date: Date, hour: number) {
     event.preventDefault();
+    
+    // Remove highlight from drop zone
+    const element = event.currentTarget as HTMLElement;
+    element.classList.remove('bg-blue-50', 'border-blue-200');
+    
+    // Calculate exact time based on mouse position
+    const { hour: exactHour, minute } = getTimeFromMouseY(event, element);
+    
+    // Create new date for the drop
     const dropDate = new Date(date);
-    dropDate.setHours(hour, 0, 0, 0);
-    await handleDrop(dropDate, false);
+    dropDate.setHours(exactHour, minute, 0, 0);
+    
+    try {
+      // Handle the drop through store function
+      await handleDrop(dropDate, false);
+      
+      // Toast is handled in the handleDrop function
+    } catch (error) {
+      console.error('Error rescheduling:', error);
+      // Error toast is handled in the handleDrop function
+    }
   }
   
-  // Calculate time from mouse position for more precise drops
-  function getTimeFromMouseY(event: MouseEvent, element: HTMLElement): number {
+  // Calculate time from mouse Y position
+  function getTimeFromMouseY(event: DragEvent | MouseEvent, element: HTMLElement): { hour: number, minute: number } {
     const rect = element.getBoundingClientRect();
     const y = event.clientY - rect.top;
     const percentage = y / rect.height;
     
-    // Convert percentage to hours (0-24)
-    return Math.floor(percentage * 24);
+    // Convert percentage to hours and minutes
+    const totalMinutes = percentage * 60;
+    const hour = Math.floor(totalMinutes / 60) + parseInt(element.dataset.hour || '0');
+    const minute = Math.round(totalMinutes % 60);
+    
+    return { hour: Math.min(Math.max(hour, 0), 23), minute };
+  }
+  
+  // Handle click on time grid to create new event
+  function handleTimeClick(event: MouseEvent, date: Date, hourBlock: number) {
+    const target = event.currentTarget as HTMLElement;
+    const { hour, minute } = getTimeFromMouseY(event, target);
+    
+    const clickDate = new Date(date);
+    clickDate.setHours(hour, minute, 0, 0);
+    
+    onTimeClick(clickDate);
   }
 </script>
 
-<div class="flex flex-col h-full overflow-hidden">
-  <!-- Day headers -->
+<div class="h-full flex flex-col overflow-hidden">
+  <!-- Week header with day names -->
   <div class="grid grid-cols-8 border-b">
-    <!-- Time column header (empty) -->
-    <div class="border-r p-2"></div>
-    
-    <!-- Day column headers -->
+    <div class="p-2 text-center text-sm font-medium text-gray-500 border-r">
+      Time
+    </div>
     {#each weekDays as day}
-      <div class="p-2 text-center border-r {isToday(day) ? 'bg-blue-50' : ''}">
-        <div class="font-medium">{formatDay(day)}</div>
+      <div class="p-2 text-center border-r last:border-r-0 {isToday(day) ? 'bg-blue-50' : ''}">
+        <div class="text-sm font-medium">
+          {day.toLocaleDateString(undefined, { weekday: 'short' })}
+        </div>
+        <div class="text-sm {isToday(day) ? 'font-bold text-blue-600' : 'text-gray-500'}">
+          {day.getDate()}
+        </div>
       </div>
     {/each}
   </div>
   
-  <!-- Week timeline with events -->
+  <!-- All-day section -->
+  <div class="grid grid-cols-8 border-b">
+    <div class="p-2 text-xs text-gray-500 border-r">All day</div>
+    {#each weekDays as day}
+      <div 
+        class="p-1 min-h-10 border-r last:border-r-0 transition-colors {isToday(day) ? 'bg-blue-50' : ''}"
+        on:dragover|preventDefault={handleDragOver}
+        on:dragleave={handleDragLeave}
+        on:drop|preventDefault={(e) => handleDrop(day, true)}
+      >
+        <!-- All day events would go here -->
+      </div>
+    {/each}
+  </div>
+  
+  <!-- Time grid -->
   <div class="flex-1 overflow-y-auto">
-    <div class="grid grid-cols-8 min-h-full">
-      <!-- Time labels -->
-      <div class="border-r">
-        {#each HOURS as hour}
-          <div class="h-16 text-xs text-gray-500 text-right pr-2 -mt-2 border-b">
-            {formatHour(hour)}
+    {#each HOURS as hour}
+      <div class="grid grid-cols-8 border-b">
+        <!-- Time label -->
+        <div class="text-xs text-gray-500 text-right p-1 pr-2 border-r">
+          {formatHour(hour)}
+        </div>
+        
+        <!-- Day columns -->
+        {#each weekDays as day, dayIndex}
+          <div 
+            class="relative h-16 border-r last:border-r-0 transition-colors {isToday(day) ? 'bg-blue-50/30' : ''}"
+            on:dragover|preventDefault={handleDragOver}
+            on:dragleave={handleDragLeave}
+            on:drop={(e) => onDrop(e, day, hour)}
+            on:click={(e) => handleTimeClick(e, day, hour)}
+            data-hour={hour}
+          >
+            <!-- Events in this hour block -->
+            {#each getEventsForDay(day) as event}
+              {@const position = getEventPosition(event)}
+              {#if position.top >= hour * (100/24) && position.top < (hour + 1) * (100/24)}
+                <div 
+                  class="absolute left-0 right-0 mx-1 rounded px-1 py-0.5 shadow-sm cursor-pointer overflow-hidden z-10 transition-opacity"
+                  style="
+                    top: {position.top % (100/24) / (100/24) * 100}%; 
+                    height: {Math.min(position.height, (100/24) - (position.top % (100/24)) / (100/24) * 100)}%; 
+                    background-color: {event.platformColor}20; 
+                    border-left: 3px solid {event.platformColor};
+                  "
+                  draggable="true"
+                  on:dragstart={(e) => handleDragStart(e, event)}
+                  on:dragend={handleDragEnd}
+                  on:click|stopPropagation={() => selectEvent(event)}
+                >
+                  <div class="text-xs font-medium truncate">{event.title}</div>
+                  <div class="text-xs truncate">
+                    {event.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                  </div>
+                </div>
+              {/if}
+            {/each}
           </div>
         {/each}
       </div>
-      
-      <!-- Day columns with time slots and events -->
-      {#each weekDays as day, dayIndex}
-        <div class="relative border-r {isToday(day) ? 'bg-blue-50' : ''}">
-          <!-- Hour grid lines -->
-          {#each HOURS as hour}
-            <div 
-              class="h-16 border-b border-gray-200 relative"
-              on:dragover={(e) => handleDragOver(e, day, hour)}
-              on:drop={(e) => onDrop(e, day, hour)}
-            ></div>
-          {/each}
-          
-          <!-- Current time indicator -->
-          {#if isToday(day)}
-            {@const now = new Date()}
-            {@const currentTimeTop = (now.getHours() * 60 + now.getMinutes()) / 1440 * 100}
-            <div 
-              class="absolute left-0 right-0 border-t-2 border-red-500 z-10"
-              style="top: {currentTimeTop}%;"
-            ></div>
-          {/if}
-          
-          <!-- Events -->
-          {#each eventsByDay[day.toDateString()] as event}
-            {@const position = getEventPosition(event)}
-            <div 
-              class="absolute left-1 right-1 rounded px-1 py-px shadow-sm cursor-pointer overflow-hidden text-xs"
-              style="
-                top: {position.top}%; 
-                height: {position.height}%; 
-                background-color: {event.platformColor}20; 
-                border-left: 3px solid {event.platformColor};
-              "
-              draggable="true"
-              on:dragstart={(e) => handleDragStart(e, event)}
-              on:click={() => selectEvent(event)}
-            >
-              <div class="font-medium truncate">{event.title}</div>
-              <div class="text-xs truncate">
-                {event.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-              </div>
-            </div>
-          {/each}
-        </div>
-      {/each}
-    </div>
+    {/each}
   </div>
 </div>
