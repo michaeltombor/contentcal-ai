@@ -1,81 +1,68 @@
 <!-- src/routes/calendar/components/CalendarMonth.svelte -->
 <script lang="ts">
+  import { createEventDispatcher } from 'svelte';
   import type { CalendarEvent } from '$lib/types/calendar';
   
+  // Props
   export let date: Date;
-  export let events: CalendarEvent[];
-  export let selectEvent: (event: CalendarEvent) => void;
-  export let startDrag: (event: CalendarEvent) => void;
-  export let handleDrop: (date: Date, allDay: boolean) => Promise<void>;
-  export let onDayClick: (date: Date) => void;
+  export let events: CalendarEvent[] = [];
+  export let selectEvent: (event: CalendarEvent) => void = () => {};
+  export let startDrag: (event: CalendarEvent) => void = () => {};
+  export let handleDrop: (date: Date, allDay: boolean) => void = () => {};
+  export let onDayClick: (date: Date) => void = () => {};
   
-  // Current month/year info
-  $: year = date.getFullYear();
-  $: month = date.getMonth();
-  $: monthName = date.toLocaleString('default', { month: 'long' });
+  // Define local state
+  let calendarDays: Date[] = [];
   
-  // Get the first day of the month
-  $: firstDay = new Date(year, month, 1);
+  // Reactive statements
+  $: currentMonth = date.getMonth();
+  $: currentYear = date.getFullYear();
+  $: firstDay = new Date(currentYear, currentMonth, 1);
+  $: lastDay = new Date(currentYear, currentMonth + 1, 0);
   
-  // Get the last day of the month
-  $: lastDay = new Date(year, month + 1, 0);
-  
-  // Get the number of days in the month
-  $: daysInMonth = lastDay.getDate();
-  
-  // Get the day of the week for the first day (0 = Sunday, 6 = Saturday)
-  $: firstDayOfWeek = firstDay.getDay();
-  
-  // Calculate the number of days to display from the previous month
-  $: daysFromPrevMonth = firstDayOfWeek;
-  
-  // Calculate total number of days to display (including days from previous and next month)
-  $: totalDays = daysFromPrevMonth + daysInMonth + (42 - daysFromPrevMonth - daysInMonth);
-  
-  // Generate an array of days to render
-  $: calendarDays = generateCalendarDays();
-  
-  function generateCalendarDays() {
-    const days = [];
-    let dayCounter = 1 - daysFromPrevMonth;
+  // Generate days in month view
+  $: {
+    // Reset array
+    calendarDays = [];
     
-    for (let i = 0; i < 6; i++) { // 6 weeks
-      const week = [];
-      
-      for (let j = 0; j < 7; j++) { // 7 days per week
-        const currentDate = new Date(year, month, dayCounter);
-        const isCurrentMonth = currentDate.getMonth() === month;
-        
-        // Get events for this day
-        const dayEvents = events.filter(event => 
-          event.start.getDate() === currentDate.getDate() &&
-          event.start.getMonth() === currentDate.getMonth() &&
-          event.start.getFullYear() === currentDate.getFullYear()
-        );
-        
-        week.push({
-          date: currentDate,
-          day: currentDate.getDate(),
-          isCurrentMonth,
-          isToday: isToday(currentDate),
-          events: dayEvents
-        });
-        
-        dayCounter++;
-      }
-      
-      days.push(week);
-      
-      // If we've rendered all the days (including padding from next month), stop
-      if (dayCounter > daysInMonth && (dayCounter - 1 - daysInMonth) % 7 === 0) {
-        break;
-      }
+    // Get first day of the month and adjust for the start of the week (Sunday = 0)
+    const firstDayOfWeek = firstDay.getDay(); // 0 = Sunday, 1 = Monday, etc.
+    
+    // Add days from previous month to start the calendar on Sunday
+    const prevMonthDays = firstDayOfWeek;
+    const prevMonthLastDate = new Date(currentYear, currentMonth, 0).getDate();
+    
+    for (let i = prevMonthDays - 1; i >= 0; i--) {
+      const day = new Date(currentYear, currentMonth - 1, prevMonthLastDate - i);
+      calendarDays.push(day);
     }
     
-    return days;
+    // Add days from current month
+    for (let i = 1; i <= lastDay.getDate(); i++) {
+      const day = new Date(currentYear, currentMonth, i);
+      calendarDays.push(day);
+    }
+    
+    // Add days from next month to fill the remaining cells
+    const totalDaysToShow = 42; // 6 rows of 7 days
+    const nextMonthDays = totalDaysToShow - calendarDays.length;
+    
+    for (let i = 1; i <= nextMonthDays; i++) {
+      const day = new Date(currentYear, currentMonth + 1, i);
+      calendarDays.push(day);
+    }
   }
   
-  // Check if a date is today
+  // Get events for a specific day
+  function getEventsForDay(day: Date): CalendarEvent[] {
+    return events.filter(event => 
+      event.start.getFullYear() === day.getFullYear() &&
+      event.start.getMonth() === day.getMonth() &&
+      event.start.getDate() === day.getDate()
+    );
+  }
+  
+  // Check if date is today
   function isToday(date: Date): boolean {
     const today = new Date();
     return date.getDate() === today.getDate() &&
@@ -83,141 +70,140 @@
            date.getFullYear() === today.getFullYear();
   }
   
-  // Days of the week
-  const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  
-  // Get a shortened event display (max 2 events per cell)
-  function getVisibleEvents(dayEvents: CalendarEvent[]) {
-    const MAX_VISIBLE = 3;
-    const visibleEvents = dayEvents.slice(0, MAX_VISIBLE);
-    const hiddenCount = dayEvents.length - MAX_VISIBLE;
-    
-    return {
-      visible: visibleEvents,
-      hiddenCount: hiddenCount > 0 ? hiddenCount : 0
-    };
+  // Check if date is in the current month
+  function isCurrentMonth(date: Date): boolean {
+    return date.getMonth() === currentMonth;
   }
   
-  // Handle drag events
-  function handleDragStart(event: DragEvent, calendarEvent: CalendarEvent) {
-    if (!event.dataTransfer) return;
-    
-    const element = event.target as HTMLElement;
-    element.style.opacity = '0.5';
-    
-    // Set visual drag effect
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', calendarEvent.id);
-    
-    // Store the event data in store
-    startDrag(calendarEvent);
-    
-    // Stop propagation to prevent opening the day when starting a drag
-    event.stopPropagation();
+  // Handle day click
+  function handleDayClick(day: Date) {
+    onDayClick(day);
   }
   
-  // Handle drag end
-  function handleDragEnd(event: DragEvent) {
-    const element = event.target as HTMLElement;
-    element.style.opacity = '1';
+  // Handle drop on day
+  function handleDayDrop(event: DragEvent, day: Date) {
+    event.preventDefault();
+    handleDrop(day, true);
   }
   
-  // Handle drag over for day cells
+  // Handle drag over day
   function handleDragOver(event: DragEvent) {
     event.preventDefault();
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = 'move';
     }
-    
-    // Add visual feedback
-    const element = event.currentTarget as HTMLElement;
-    element.classList.add('bg-blue-50');
   }
   
-  // Handle drag leave for day cells
-  function handleDragLeave(event: DragEvent) {
-    const element = event.currentTarget as HTMLElement;
-    element.classList.remove('bg-blue-50');
+  // Handle event click
+  function handleEventClick(event: MouseEvent, calEvent: CalendarEvent) {
+    event.stopPropagation(); // Prevent day click
+    selectEvent(calEvent);
   }
   
-  // Handle drop on a day cell
-  async function onDropDay(event: DragEvent, date: Date) {
-    event.preventDefault();
-    
-    // Remove highlight from drop zone
-    const element = event.currentTarget as HTMLElement;
-    element.classList.remove('bg-blue-50');
-    
-    try {
-      // Handle the drop through store function
-      await handleDrop(date, true);
-      
-      // Toast is handled in the handleDrop function
-    } catch (error) {
-      console.error('Error rescheduling:', error);
-      // Error toast is handled in the handleDrop function
+  // Start dragging an event
+  function handleDragStart(event: DragEvent, calEvent: CalendarEvent) {
+    if (event.dataTransfer) {
+      event.dataTransfer.setData('text/plain', calEvent.id);
+      event.dataTransfer.effectAllowed = 'move';
     }
+    startDrag(calEvent);
   }
+  
+  // Week days headers
+  const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 </script>
 
-<div class="h-full flex flex-col overflow-hidden">
-  <!-- Calendar header with day names -->
-  <div class="grid grid-cols-7 border-b">
-    {#each daysOfWeek as day}
-      <div class="p-2 text-center text-sm font-medium text-gray-500">
+<div class="month-view h-full flex flex-col">
+  <!-- Week days header -->
+  <div class="week-days grid grid-cols-7 border-b border-gray-200">
+    {#each weekDays as day}
+      <div class="week-day p-2 text-center text-sm font-medium text-gray-500">
         {day}
       </div>
     {/each}
   </div>
   
-  <!-- Calendar grid with days -->
-  <div class="flex-1 overflow-y-auto">
-    {#each calendarDays as week}
-      <div class="grid grid-cols-7 border-b">
-        {#each week as day}
-          {@const eventData = getVisibleEvents(day.events)}
-          <div 
-            class="min-h-32 p-1 border-r last:border-r-0 transition-colors {
-              day.isCurrentMonth ? 'bg-white' : 'bg-gray-50 text-gray-400'
-            } {
-              day.isToday ? 'border-l-2 border-l-blue-500' : ''
-            }"
-            on:dragover={handleDragOver}
-            on:dragleave={handleDragLeave}
-            on:drop={(e) => onDropDay(e, day.date)}
-            on:click={() => onDayClick(day.date)}
-          >
-            <!-- Day number -->
-            <div class="text-right mb-1">
-              <span class="text-sm {day.isToday ? 'font-bold text-blue-600' : 'font-medium'}">
-                {day.day}
-              </span>
+  <!-- Calendar grid -->
+  <div class="calendar-grid flex-1 grid grid-cols-7 grid-rows-6">
+    {#each calendarDays as day, index}
+      <div 
+        class="calendar-day p-1 border border-gray-100 relative overflow-hidden 
+              {isCurrentMonth(day) ? 'bg-white' : 'bg-gray-50 text-gray-400'}
+              {isToday(day) ? 'today' : ''}"
+        on:click={() => handleDayClick(day)}
+        on:dragover={handleDragOver}
+        on:drop={(e) => handleDayDrop(e, day)}
+      >
+        <!-- Day number -->
+        <div class="day-number flex justify-between items-center">
+          <span class="text-sm {isToday(day) ? 'today-number' : ''}">
+            {day.getDate()}
+          </span>
+          
+          <!-- Optional: Add indicator for events -->
+          {#if getEventsForDay(day).length > 0}
+            <span class="event-indicator bg-blue-500 rounded-full w-1.5 h-1.5"></span>
+          {/if}
+        </div>
+        
+        <!-- Events for the day -->
+        <div class="day-events mt-1 space-y-1 overflow-y-auto max-h-[calc(100%-20px)]">
+          {#each getEventsForDay(day).slice(0, 3) as event}
+            <div 
+              class="event p-1 text-xs rounded cursor-pointer truncate"
+              style="background-color: {event.backgroundColor || '#e8f4fd'}; border-left: 2px solid {event.platformColor || '#2563eb'};"
+              draggable="true"
+              on:click={(e) => handleEventClick(e, event)}
+              on:dragstart={(e) => handleDragStart(e, event)}
+            >
+              {event.title}
             </div>
-            
-            <!-- Events -->
-            <div class="space-y-1">
-              {#each eventData.visible as event}
-                <div 
-                  class="text-xs p-1 rounded overflow-hidden text-ellipsis whitespace-nowrap cursor-pointer"
-                  style="background-color: {event.platformColor}20; border-left: 2px solid {event.platformColor};"
-                  draggable="true"
-                  on:dragstart={(e) => handleDragStart(e, event)}
-                  on:dragend={handleDragEnd}
-                  on:click|stopPropagation={() => selectEvent(event)}
-                >
-                  {event.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} {event.title}
-                </div>
-              {/each}
-              
-              {#if eventData.hiddenCount > 0}
-                <div class="text-xs text-gray-500 text-center pt-1">
-                  + {eventData.hiddenCount} more
-                </div>
-              {/if}
+          {/each}
+          
+          <!-- More indicator if there are more events -->
+          {#if getEventsForDay(day).length > 3}
+            <div class="more-events text-xs text-center text-gray-500">
+              +{getEventsForDay(day).length - 3} more
             </div>
-          </div>
-        {/each}
+          {/if}
+        </div>
       </div>
     {/each}
   </div>
 </div>
+
+<style>
+  /* Fixed the current day styling */
+  .today {
+    position: relative;
+  }
+  
+  .today::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(59, 130, 246, 0.05);
+    pointer-events: none;
+    z-index: 0;
+  }
+  
+  .today-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
+    width: 24px;
+    border-radius: 50%;
+    background-color: #3b82f6;
+    color: white;
+    font-weight: bold;
+  }
+  
+  .day-events {
+    position: relative;
+    z-index: 1;
+  }
+</style>

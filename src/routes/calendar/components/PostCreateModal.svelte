@@ -1,315 +1,312 @@
+<!-- src/routes/calendar/components/PostCreateModal.svelte -->
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import { createPost } from '$lib/services/postService';
-  import { uploadMediaFiles } from '$lib/services/storageService';
-  import { getAuth } from 'firebase/auth';
-  import type { PlatformType, PostStatus } from '$lib/types/calendar';
-  import Button from '$lib/components/Button.svelte';
-  import Modal from '$lib/components/Modal.svelte';
+  import { fade } from 'svelte/transition';
+  import Button from '$lib/components/common/Button.svelte';
+  import Modal from '$lib/components/common/Modal.svelte';
+  import { postStore } from '$lib/stores/postStore';
+  import { authStore } from '$lib/stores/authStore';
+import { getFirebaseAuth } from '$lib/firebase/firebase';
+  import { toastStore } from '$lib/stores/toastStore';
+  import type { Post } from '$lib/types/Post';
   
-  export let show = false;
-  export let initialDate: Date;
+  // Component props
+  export let selectedDate: Date | null = null;
+  export let post: Post | null = null;
   
-  const dispatch = createEventDispatcher();
-  
-  // Form data
-  let title = '';
-  let content = '';
-  let scheduledDate = initialDate;
-  let scheduledTime = '12:00';
-  let selectedPlatforms: PlatformType[] = ['twitter'];
-  let tags = '';
-  let mediaFiles: FileList | null = null;
-  
-  // Form state
+  // Local state
   let isSubmitting = false;
-  let error = '';
-  let mediaPreviewUrls: string[] = [];
+  let socialPlatforms = ['Twitter', 'Facebook', 'Instagram', 'LinkedIn'];
+  let imageFile: File | null = null;
+  let imagePreviewUrl: string | null = null;
+  let uploadProgress = 0;
   
-  // Reset form to initial state
-  function resetForm() {
-    title = '';
-    content = '';
-    scheduledDate = initialDate;
-    scheduledTime = '12:00';
-    platform = SocialPlatform.Twitter;
-    tags = '';
-    mediaFiles = null;
-    mediaPreviewUrls = [];
-    error = '';
+  // Form data with proper defaults
+  let formData = {
+    content: '',
+    scheduledDate: selectedDate ? new Date(selectedDate) : new Date(),
+    platforms: ['Twitter'] as string[],
+    mediaUrls: [] as string[],
+    tags: [] as string[]
+  };
+  
+  // Initialize form with post data if editing
+  $: if (post) {
+    formData = { 
+      ...formData,
+      content: post.content || '',
+      scheduledDate: new Date(post.scheduledDate) || new Date(),
+      platforms: post.platforms || [post.platform] || ['Twitter'],
+      mediaUrls: post.mediaUrls || [],
+      tags: post.tags || []
+    };
   }
   
-  // Handle modal close
+  // Set up event dispatcher
+  const dispatch = createEventDispatcher();
+  
+  // Close modal
   function handleClose() {
-    resetForm();
     dispatch('close');
   }
   
-  // Handle file selection
-  function handleFileSelect(event: Event) {
-    const input = event.target as HTMLInputElement;
-    if (!input.files || input.files.length === 0) return;
-    
-    mediaFiles = input.files;
-    
-    // Create preview URLs
-    mediaPreviewUrls = [];
-    for (let i = 0; i < mediaFiles.length; i++) {
-      const file = mediaFiles[i];
-      if (file.type.startsWith('image/')) {
-        mediaPreviewUrls.push(URL.createObjectURL(file));
-      }
-    }
-  }
-  
-  // Handle form submission
-  async function handleSubmit() {
+  // Save post
+  async function handleSave() {
     try {
       isSubmitting = true;
-      error = '';
       
-      // Validate form
-      if (!content.trim()) {
-        error = 'Content is required';
-        return;
+      if (!$authStore.user) {
+        throw new Error('User not authenticated');
       }
       
-      if (selectedPlatforms.length === 0) {
-        error = 'At least one platform must be selected';
-        return;
+      // Upload image if one is selected
+      let imageUrl: string | null = null;
+      if (imageFile) {
+        imageUrl = await uploadImage();
       }
       
-      // Combine date and time
-      const [hours, minutes] = scheduledTime.split(':').map(Number);
-      const scheduleDateTime = new Date(scheduledDate);
-      scheduleDateTime.setHours(hours, minutes);
-      
-      // Convert tags string to array
-      const tagsArray = tags.split(',')
-        .map(tag => tag.trim())
-        .filter(tag => tag.length > 0);
-      
-      // Upload media files if any
-      let mediaUrls: string[] = [];
-      if (mediaFiles && mediaFiles.length > 0) {
-        const auth = getAuth();
-        const userId = auth.currentUser?.uid;
-        
-        if (!userId) {
-          error = 'You must be logged in to upload media';
-          return;
-        }
-        
-        mediaUrls = await uploadMediaFiles(mediaFiles, userId);
+      // Prepare media URLs array with the new image if uploaded
+      const mediaUrls = [...formData.mediaUrls];
+      if (imageUrl) {
+        mediaUrls.push(imageUrl);
       }
       
-      // Create post object
-      const newPost = {
-        content,
-        scheduledTime: scheduleDateTime,
-        platforms: selectedPlatforms,
-        status: 'scheduled' as PostStatus,
-        tags: tagsArray,
-        mediaUrls,
-        aiGenerated: false,
-        isRecurring: false
+      const postData: Partial<Post> = {
+        content: formData.content,
+        scheduledDate: formData.scheduledDate.toISOString(),
+        platforms: formData.platforms,
+        platform: formData.platforms[0], // For backward compatibility
+        mediaUrls: mediaUrls,
+        tags: formData.tags,
+        userId: $authStore.user.uid,
+        createdAt: new Date().toISOString(),
+        status: 'scheduled'
       };
       
-      // Save to Firebase
-      const postId = await createPost(newPost);
+      if (post?.id) {
+        // Update existing post
+        await postStore.updatePost(post.id, postData);
+        toastStore.success('Post updated successfully!');
+      } else {
+        // Create new post
+        await postStore.createPost(postData);
+        toastStore.success('Post created successfully!');
+      }
       
-      // Notify parent component
-      dispatch('created', { postId });
+      // Clean up any object URLs to prevent memory leaks
+      if (imagePreviewUrl) {
+        URL.revokeObjectURL(imagePreviewUrl);
+      }
       
-      // Close modal and reset form
-      handleClose();
-    } catch (err) {
-      console.error('Error creating post:', err);
-      error = 'Failed to create post. Please try again.';
+      dispatch('save');
+    } catch (error) {
+      console.error('Error saving post:', error);
+      toastStore.error('Failed to save post');
     } finally {
       isSubmitting = false;
     }
   }
   
-  $: {
-    // Update scheduled date when initialDate changes
-    if (initialDate) {
-      scheduledDate = initialDate;
+  // Handle image file selection
+  function handleImageChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    
+    if (input.files && input.files[0]) {
+      const file = input.files[0];
+      
+      // Check file type
+      if (!file.type.match('image.*')) {
+        toastStore.error('Please select an image file');
+        return;
+      }
+      
+      // Check file size (limit to 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        toastStore.error('Image file size must be less than 5MB');
+        return;
+      }
+      
+      // Set the file and create preview URL
+      imageFile = file;
+      imagePreviewUrl = URL.createObjectURL(file);
+    } else {
+      // Clear image if no file selected
+      imageFile = null;
+      imagePreviewUrl = null;
     }
+  }
+  
+  // Remove selected image
+  function removeImage() {
+    imageFile = null;
+    imagePreviewUrl = null;
+    // Reset the file input
+    const fileInput = document.getElementById('image-upload') as HTMLInputElement;
+    if (fileInput) {
+      fileInput.value = '';
+    }
+  }
+  
+  // Upload image to Firebase Storage
+  async function uploadImage(): Promise<string | null> {
+    if (!imageFile || !$authStore.user) {
+      return null;
+    }
+    
+    try {
+      const storage = getFirebaseStorage();
+      const storageRef = ref(storage, `users/${$authStore.user.uid}/posts/${Date.now()}_${imageFile.name}`);
+      
+      // Upload the file
+      const uploadTask = await uploadBytes(storageRef, imageFile);
+      
+      // Get download URL
+      const downloadURL = await getDownloadURL(uploadTask.ref);
+      
+      return downloadURL;
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      toastStore.error('Failed to upload image');
+      return null;
+    }
+  }
+  
+  // Request AI suggestions (can be implemented later)
+  function requestSuggestions() {
+    // Will call aiService here
+    toastStore.info('AI suggestions coming soon!');
   }
 </script>
 
-<Modal {show} on:close={handleClose} title="Create New Post">
-  <div class="post-form">
-    {#if error}
-      <div class="error-message bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-        {error}
-      </div>
-    {/if}
+<Modal on:close={handleClose}>
+  <div class="post-modal" transition:fade>
+    <h2 class="text-xl font-bold mb-4">
+      {post ? 'Edit Post' : 'Create New Post'}
+    </h2>
     
-    <form on:submit|preventDefault={handleSubmit}>
-
+    <form on:submit|preventDefault={handleSave} class="space-y-4">
+      <!-- Platform selection -->
+      <div class="form-group">
+        <label class="block text-sm font-medium mb-2">Platforms</label>
+        <div class="space-y-2">
+          {#each socialPlatforms as platform}
+            <label class="inline-flex items-center mr-4">
+              <input 
+                type="checkbox" 
+                value={platform}
+                class="form-checkbox h-4 w-4 text-blue-600"
+                checked={formData.platforms.includes(platform)}
+                on:change={(e) => {
+                  if (e.target.checked) {
+                    formData.platforms = [...formData.platforms, platform];
+                  } else {
+                    formData.platforms = formData.platforms.filter(p => p !== platform);
+                  }
+                }}
+              />
+              <span class="ml-2 text-sm">{platform}</span>
+            </label>
+          {/each}
+        </div>
+      </div>
       
-      <div class="mb-4">
-        <label for="content" class="block text-sm font-medium text-gray-700 mb-1">Content</label>
+      <!-- Post content -->
+      <div class="form-group">
+        <label for="content" class="block text-sm font-medium mb-1">Content</label>
         <textarea
           id="content"
-          bind:value={content}
-          class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 h-32"
+          class="w-full p-2 border rounded h-32"
           placeholder="Write your post content here..."
-          disabled={isSubmitting}
+          bind:value={formData.content}
         ></textarea>
-      </div>
-      
-      <div class="grid grid-cols-2 gap-4 mb-4">
-        <div>
-          <label for="scheduledDate" class="block text-sm font-medium text-gray-700 mb-1">Date</label>
-          <input
-            type="date"
-            id="scheduledDate"
-            bind:value={scheduledDate}
-            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            disabled={isSubmitting}
-          />
+        
+        <!-- Character count based on platforms -->
+        <div class="text-sm text-gray-500 mt-1">
+          {#if formData.platforms.includes('Twitter')}
+            {280 - (formData.content?.length || 0)} characters remaining (Twitter)
+          {/if}
+          {formData.content?.length || 0} characters total
         </div>
         
-        <div>
-          <label for="scheduledTime" class="block text-sm font-medium text-gray-700 mb-1">Time</label>
-          <input
-            type="time"
-            id="scheduledTime"
-            bind:value={scheduledTime}
-            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            disabled={isSubmitting}
-          />
-        </div>
+        <!-- AI suggestion button -->
+        <button 
+          type="button"
+          class="text-sm text-blue-500 mt-2"
+          on:click={requestSuggestions}
+        >
+          Get AI content suggestions
+        </button>
       </div>
       
-      <div class="mb-4">
-        <label class="block text-sm font-medium text-gray-700 mb-1">Platforms</label>
-        <div class="flex flex-wrap gap-2">
-          <div class="flex items-center">
-            <input
-              type="checkbox"
-              id="platform-twitter"
-              value="twitter"
-              checked={selectedPlatforms.includes('twitter')}
-              on:change={(e) => {
-                if (e.target.checked) {
-                  selectedPlatforms = [...selectedPlatforms, 'twitter'];
-                } else {
-                  selectedPlatforms = selectedPlatforms.filter(p => p !== 'twitter');
-                }
-              }}
-              class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              disabled={isSubmitting}
+      <!-- Image upload section -->
+      <div class="form-group">
+        <label for="image-upload" class="block text-sm font-medium mb-1">Add Image</label>
+        
+        {#if imagePreviewUrl}
+          <!-- Image preview -->
+          <div class="relative mt-2 mb-4">
+            <img 
+              src={imagePreviewUrl} 
+              alt="Preview" 
+              class="max-h-48 rounded border border-gray-200"
             />
-            <label for="platform-twitter" class="ml-2 text-sm text-gray-700">Twitter</label>
+            <button
+              type="button"
+              class="absolute top-2 right-2 bg-gray-800 bg-opacity-70 text-white rounded-full p-1 hover:bg-opacity-100"
+              on:click={removeImage}
+              aria-label="Remove image"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+              </svg>
+            </button>
           </div>
-          
-          <div class="flex items-center">
+        {:else}
+          <!-- File input -->
+          <div class="mt-1 flex items-center">
+            <label
+              for="image-upload"
+              class="cursor-pointer inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Upload Image
+            </label>
             <input
-              type="checkbox"
-              id="platform-facebook"
-              value="facebook"
-              checked={selectedPlatforms.includes('facebook')}
-              on:change={(e) => {
-                if (e.target.checked) {
-                  selectedPlatforms = [...selectedPlatforms, 'facebook'];
-                } else {
-                  selectedPlatforms = selectedPlatforms.filter(p => p !== 'facebook');
-                }
-              }}
-              class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              disabled={isSubmitting}
+              id="image-upload"
+              type="file"
+              accept="image/*"
+              class="sr-only"
+              on:change={handleImageChange}
             />
-            <label for="platform-facebook" class="ml-2 text-sm text-gray-700">Facebook</label>
+            <span class="ml-3 text-sm text-gray-500">JPG, PNG, GIF up to 5MB</span>
           </div>
-          
-          <div class="flex items-center">
-            <input
-              type="checkbox"
-              id="platform-instagram"
-              value="instagram"
-              checked={selectedPlatforms.includes('instagram')}
-              on:change={(e) => {
-                if (e.target.checked) {
-                  selectedPlatforms = [...selectedPlatforms, 'instagram'];
-                } else {
-                  selectedPlatforms = selectedPlatforms.filter(p => p !== 'instagram');
-                }
-              }}
-              class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              disabled={isSubmitting}
-            />
-            <label for="platform-instagram" class="ml-2 text-sm text-gray-700">Instagram</label>
-          </div>
-          
-          <div class="flex items-center">
-            <input
-              type="checkbox"
-              id="platform-linkedin"
-              value="linkedin"
-              checked={selectedPlatforms.includes('linkedin')}
-              on:change={(e) => {
-                if (e.target.checked) {
-                  selectedPlatforms = [...selectedPlatforms, 'linkedin'];
-                } else {
-                  selectedPlatforms = selectedPlatforms.filter(p => p !== 'linkedin');
-                }
-              }}
-              class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              disabled={isSubmitting}
-            />
-            <label for="platform-linkedin" class="ml-2 text-sm text-gray-700">LinkedIn</label>
-          </div>
-        </div>
+        {/if}
       </div>
       
-      <div class="mb-4">
-        <label for="tags" class="block text-sm font-medium text-gray-700 mb-1">Tags (comma separated)</label>
-        <input
-          type="text"
-          id="tags"
-          bind:value={tags}
-          class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-          placeholder="e.g. marketing, social, promotion"
-          disabled={isSubmitting}
+      <!-- Scheduled date/time -->
+      <div class="form-group">
+        <label for="scheduledDate" class="block text-sm font-medium mb-1">Schedule for</label>
+        <input 
+          id="scheduledDate" 
+          type="datetime-local"
+          class="w-full p-2 border rounded"
+          bind:value={formData.scheduledDate}
         />
       </div>
       
-      <div class="mb-4">
-        <label for="media" class="block text-sm font-medium text-gray-700 mb-1">Media (optional)</label>
-        <input
-          type="file"
-          id="media"
-          multiple
-          accept="image/*,video/*"
-          on:change={handleFileSelect}
-          class="block w-full text-sm text-gray-500 file:mr-4 file:rounded-md file:border-0 file:bg-blue-50 file:py-2 file:px-4 file:text-sm file:font-semibold file:text-blue-700 hover:file:bg-blue-100"
-          disabled={isSubmitting}
-        />
-      </div>
-      
-      {#if mediaPreviewUrls.length > 0}
-        <div class="mb-4">
-          <p class="text-sm font-medium text-gray-700 mb-2">Media Preview:</p>
-          <div class="grid grid-cols-3 gap-2">
-            {#each mediaPreviewUrls as url}
-              <div class="relative h-24 bg-gray-100 rounded overflow-hidden">
-                <img src={url} alt="Preview" class="h-full w-full object-cover" />
-              </div>
-            {/each}
-          </div>
-        </div>
-      {/if}
-      
-      <div class="flex justify-end gap-3 mt-6">
-        <Button type="button" variant="secondary" on:click={handleClose} disabled={isSubmitting}>
+      <!-- Action buttons -->
+      <div class="flex justify-end space-x-2 mt-6">
+        <Button variant="secondary" on:click={handleClose}>
           Cancel
         </Button>
-        <Button type="submit" variant="primary" disabled={isSubmitting}>
-          {isSubmitting ? 'Creating...' : 'Create Post'}
+        <Button 
+          variant="primary" 
+          type="submit" 
+          disabled={isSubmitting || !formData.content}
+        >
+          {isSubmitting ? 'Saving...' : post ? 'Update Post' : 'Create Post'}
         </Button>
       </div>
     </form>

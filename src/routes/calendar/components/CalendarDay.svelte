@@ -1,261 +1,141 @@
-<!-- src/routes/calendar/components/Calendar.svelte -->
+<!-- src/routes/calendar/components/CalendarDay.svelte -->
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import { 
-    calendarViewState, 
-    filteredEvents
-  } from '$lib/stores/calendarStore';
-  import { 
-    postStore,
-    postStoreLoading
-  } from '$lib/stores/postStore';
+  import { createEventDispatcher } from 'svelte';
   import type { CalendarEvent } from '$lib/types/calendar';
-  import CalendarDay from './CalendarDay.svelte';
-  import CalendarWeek from './CalendarWeek.svelte';
-  import CalendarMonth from './CalendarMonth.svelte';
-  import CalendarHeader from './CalendarHeader.svelte';
-  import CalendarSidebar from './CalendarSidebar.svelte';
-  import PostEditor from './PostEditor.svelte';
-  import CalendarLoading from './CalendarLoading.svelte';
-  import ToastContainer from '$lib/components/common/ToastContainer.svelte';
-  import { fade } from 'svelte/transition';
-
-  export let openCreateModal: (date?: Date) => void;
-
-  // Loading state
-  let isLoading = true;
-
-  // Track mouse position for drag preview
-  let mouseX = 0;
-  let mouseY = 0;
   
-  const updateMousePosition = (event: MouseEvent) => {
-    mouseX = event.clientX;
-    mouseY = event.clientY;
-  };
-
-  // Handle date click for creating new posts
-  function handleDateClick(date: Date) {
-    openCreateModal(date);
+  // Props
+  export let date: Date;
+  export let events: CalendarEvent[] = [];
+  export let selectEvent: (event: CalendarEvent) => void = () => {};
+  export let startDrag: (event: CalendarEvent) => void = () => {};
+  export let handleDrop: (date: Date, allDay: boolean) => void = () => {};
+  export let onTimeClick: (date: Date) => void = () => {};
+  
+  // Create time slots from 8 AM to 8 PM
+  const hours = Array.from({ length: 13 }, (_, i) => i + 8); // 8 AM to 8 PM
+  
+  // Filter events for this day
+  $: todayEvents = events.filter(event => 
+    event.start.toDateString() === date.toDateString()
+  );
+  
+  // Group events by hour
+  $: eventsByHour = groupEventsByHour(todayEvents);
+  
+  // Format date
+  $: formattedDate = date.toLocaleDateString('en-US', { 
+    weekday: 'long', 
+    month: 'long', 
+    day: 'numeric',
+    year: 'numeric'
+  });
+  
+  // Handle time slot click
+  function handleTimeSlotClick(hour: number) {
+    const newDate = new Date(date);
+    newDate.setHours(hour, 0, 0, 0);
+    onTimeClick(newDate);
   }
   
-  // Handle the add button click
-  function handleAddButtonClick() {
-    // Call the openCreateModal function with current date
-    openCreateModal(new Date());
+  // Handle drop on time slot
+  function handleTimeSlotDrop(event: DragEvent, hour: number) {
+    event.preventDefault();
+    
+    const dropDate = new Date(date);
+    dropDate.setHours(hour, 0, 0, 0);
+    handleDrop(dropDate, false);
   }
   
-  // Direct implementation of the functions to avoid import issues
-  
-  // Select event function
-  function localSelectEvent(event: CalendarEvent) {
-    calendarViewState.set({
-      ...$calendarViewState,
-      selectedEvent: event,
-      // Find and select the corresponding post
-      selectedPost: $postStore.posts.find(post => post.id === event.postId)
-    });
-  }
-  
-  // Clear selection function
-  function localClearSelection() {
-    calendarViewState.set({
-      ...$calendarViewState,
-      selectedEvent: undefined,
-      selectedPost: undefined
-    });
-  }
-  
-  // Start drag function
-  function localStartDrag(event: CalendarEvent) {
-    calendarViewState.set({
-      ...$calendarViewState,
-      draggedEvent: event
-    });
-  }
-  
-  // End drag function
-  function localEndDrag() {
-    calendarViewState.set({
-      ...$calendarViewState,
-      draggedEvent: undefined
-    });
-  }
-  
-  // Handle drop function
-  async function localHandleDrop(date: Date, allDay: boolean = false) {
-    const state = $calendarViewState;
-    if (!state.draggedEvent) return;
-
-    try {
-      // Calculate new time while preserving hours and minutes if not all day
-      const newDate = new Date(date);
-      if (!allDay) {
-        const originalDate = state.draggedEvent.start;
-        newDate.setHours(originalDate.getHours());
-        newDate.setMinutes(originalDate.getMinutes());
-      } else {
-        // If dropped as all-day event, set to beginning of day
-        newDate.setHours(9, 0, 0, 0); // Default to 9 AM
-      }
-
-      // Use the postStore reschedulePost function
-      await postStore.reschedulePost(state.draggedEvent.postId, newDate);
-      
-      // Show success toast if you have a toast system
-      // toastStore.success('Post rescheduled successfully');
-
-      localEndDrag();
-    } catch (error) {
-      console.error('Error handling drop:', error);
-      // Show error toast if you have a toast system
-      // toastStore.error('Failed to reschedule post');
-    }
-  }
-  
-  // Handle window drag events to ensure we clean up on drop outside
-  function handleWindowDragOver(event: DragEvent) {
-    // Allow dropping anywhere in the window
+  // Handle drag over time slot
+  function handleDragOver(event: DragEvent) {
     event.preventDefault();
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = 'move';
     }
   }
   
-  function handleWindowDrop(event: DragEvent) {
-    // If dropped outside a valid drop zone, cancel the drag operation
-    event.preventDefault();
-    localEndDrag();
-  }
-
-  // Dummy functions to pass to CalendarHeader (it now handles these internally)
-  const dummyNavigate = () => {};
-  const dummyChangeView = (_view: any) => {};
-
-  onMount(() => {
-    // Load posts if not already loaded
-    if (!$postStore.loading && $postStore.posts.length === 0) {
-      postStore.loadPosts();
+  // Group events by their starting hour
+  function groupEventsByHour(events: CalendarEvent[]): Record<number, CalendarEvent[]> {
+    const result: Record<number, CalendarEvent[]> = {};
+    
+    // Initialize all hours with empty arrays
+    for (const hour of hours) {
+      result[hour] = [];
     }
     
-    // Set loading to false after data has loaded
-    const unsubscribeLoading = postStoreLoading.subscribe(loading => {
-      // Add a small delay to ensure UI transitions are smooth
-      if (!loading) {
-        setTimeout(() => {
-          isLoading = false;
-        }, 500);
-      } else {
-        isLoading = true;
+    // Add events to their respective hours
+    for (const event of events) {
+      const hour = event.start.getHours();
+      // Only add events that are in our display range (8 AM - 8 PM)
+      if (hour >= 8 && hour <= 20) {
+        if (!result[hour]) {
+          result[hour] = [];
+        }
+        result[hour].push(event);
       }
-    });
+    }
     
-    // Add event listeners for global drag and drop
-    window.addEventListener('dragover', handleWindowDragOver);
-    window.addEventListener('drop', handleWindowDrop);
-    
-    return () => {
-      if (unsubscribeLoading) unsubscribeLoading();
-      window.removeEventListener('dragover', handleWindowDragOver);
-      window.removeEventListener('drop', handleWindowDrop);
-    };
-  });
+    return result;
+  }
+  
+  // Handle event click
+  function handleEventClick(event: CalendarEvent) {
+    selectEvent(event);
+  }
+  
+  // Start dragging an event
+  function handleDragStart(event: DragEvent, calEvent: CalendarEvent) {
+    if (event.dataTransfer) {
+      event.dataTransfer.setData('text/plain', calEvent.id);
+      event.dataTransfer.effectAllowed = 'move';
+    }
+    startDrag(calEvent);
+  }
 </script>
 
-<svelte:window on:mousemove={updateMousePosition} />
-
-<div class="flex h-screen flex-col bg-gray-50">
-  <!-- Show loading state -->
-  {#if isLoading}
-    <div in:fade={{ duration: 200 }} out:fade={{ duration: 200 }}>
-      <CalendarLoading />
-    </div>
-  {:else}
-    <div class="flex h-full flex-col">
-      <!-- Calendar Header with navigation and view controls -->
-      <CalendarHeader 
-        date={$calendarViewState.currentDate} 
-        view={$calendarViewState.currentView}
-        navigateToToday={dummyNavigate}
-        navigateToPrevious={dummyNavigate}
-        navigateToNext={dummyNavigate}
-        changeView={dummyChangeView}
-      />
-      
-      <div class="flex flex-1 overflow-hidden">
-        <!-- Sidebar with filters and quick add -->
-        <CalendarSidebar />
-        
-        <!-- Main calendar area -->
-        <div class="flex-1 overflow-auto p-4">
-          <div class="bg-white rounded-lg shadow-md h-full">
-            {#if $calendarViewState.currentView === 'day'}
-              <CalendarDay 
-                date={$calendarViewState.currentDate} 
-                events={$filteredEvents}
-                selectEvent={localSelectEvent}
-                startDrag={localStartDrag}
-                handleDrop={localHandleDrop}
-                onTimeClick={handleDateClick}
-              />
-            {:else if $calendarViewState.currentView === 'week'}
-              <CalendarWeek 
-                startDate={$calendarViewState.currentDate} 
-                events={$filteredEvents}
-                selectEvent={localSelectEvent}
-                startDrag={localStartDrag}
-                handleDrop={localHandleDrop}
-                onTimeClick={handleDateClick}
-              />
-            {:else}
-              <CalendarMonth 
-                date={$calendarViewState.currentDate} 
-                events={$filteredEvents}
-                selectEvent={localSelectEvent}
-                startDrag={localStartDrag}
-                handleDrop={localHandleDrop}
-                onDayClick={handleDateClick}
-              />
-            {/if}
-          </div>
-        </div>
-        
-        <!-- Post editor sidebar when an event is selected -->
-        {#if $calendarViewState.selectedEvent && $calendarViewState.selectedPost}
-          <div class="w-1/4 border-l border-gray-200 overflow-auto">
-            <PostEditor 
-              post={$calendarViewState.selectedPost} 
-              onClose={localClearSelection} 
-            />
-          </div>
-        {/if}
-      </div>
-      
-      <!-- Drag preview that follows mouse when dragging -->
-      {#if $calendarViewState.draggedEvent}
-        <div 
-          class="fixed pointer-events-none z-50 bg-white rounded shadow-md px-2 py-1 border-l-4"
-          style="left: {mouseX + 10}px; top: {mouseY + 10}px; border-left-color: {$calendarViewState.draggedEvent.platformColor};"
-        >
-          <p class="text-xs font-medium truncate max-w-xs">
-            {$calendarViewState.draggedEvent.title}
-          </p>
-          <p class="text-xs text-gray-500">
-            {$calendarViewState.draggedEvent.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-          </p>
-        </div>
-      {/if}
-      
-      <!-- Add post button (fixed) -->
-      <button 
-        class="fixed right-6 bottom-6 z-30 bg-blue-600 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-lg hover:bg-blue-700"
-        on:click={handleAddButtonClick}
-        aria-label="Create New Post"
+<div class="day-view h-full flex flex-col">
+  <!-- Day header -->
+  <div class="day-header p-4 border-b border-gray-200">
+    <h2 class="text-xl font-semibold">{formattedDate}</h2>
+  </div>
+  
+  <!-- Time slots -->
+  <div class="time-slots flex-1 overflow-y-auto p-4">
+    {#each hours as hour}
+      <div 
+        class="time-slot flex border-b border-gray-100 hover:bg-gray-50"
+        on:click={() => handleTimeSlotClick(hour)}
+        on:dragover={handleDragOver}
+        on:drop={(e) => handleTimeSlotDrop(e, hour)}
       >
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-        </svg>
-      </button>
-    </div>
-  {/if}
+        <!-- Time label -->
+        <div class="time-label w-24 py-3 pr-4 text-right text-gray-500">
+          {hour === 12 ? '12 PM' : hour < 12 ? `${hour} AM` : `${hour - 12} PM`}
+        </div>
+        
+        <!-- Events container -->
+        <div class="events-container flex-1 min-h-[60px] py-1 pl-2">
+          {#each eventsByHour[hour] || [] as event}
+            <div 
+              class="event p-1 mb-1 rounded text-sm cursor-pointer"
+              style="background-color: {event.backgroundColor || '#e8f4fd'}; border-left: 3px solid {event.platformColor || '#2563eb'};"
+              draggable="true"
+              on:click={() => handleEventClick(event)}
+              on:dragstart={(e) => handleDragStart(e, event)}
+            >
+              <div class="event-title font-medium">
+                {event.title}
+              </div>
+              <div class="event-time text-xs text-gray-600">
+                {event.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                {#if event.end}
+                  - {event.end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/each}
+  </div>
 </div>
