@@ -1,13 +1,15 @@
 <!-- src/routes/calendar/components/PostCreateModal.svelte -->
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import Button from '$lib/components/common/Button.svelte';
   import Modal from '$lib/components/common/Modal.svelte';
   import { postStore } from '$lib/stores/postStore';
   import { authStore } from '$lib/stores/authStore';
-import { getFirebaseAuth } from '$lib/firebase/firebase';
   import { toastStore } from '$lib/stores/toastStore';
+  import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+  // Import from centralized Firebase file
+  import { auth, storage, getCurrentUser } from '$lib/firebase';
   import type { Post } from '$lib/types/Post';
   
   // Component props
@@ -42,6 +44,15 @@ import { getFirebaseAuth } from '$lib/firebase/firebase';
     };
   }
   
+  // Format date for datetime-local input
+  function formatDateForInput(date: Date): string {
+    // Format as YYYY-MM-DDThh:mm
+    return date.toISOString().slice(0, 16);
+  }
+  
+  // Initial scheduled date
+  $: scheduledDateFormatted = formatDateForInput(formData.scheduledDate);
+  
   // Set up event dispatcher
   const dispatch = createEventDispatcher();
   
@@ -50,60 +61,33 @@ import { getFirebaseAuth } from '$lib/firebase/firebase';
     dispatch('close');
   }
   
-  // Save post
-  async function handleSave() {
+  // Upload image to Firebase Storage
+  async function uploadImage(userId?: string): Promise<string | null> {
+    if (!imageFile) {
+      return null;
+    }
+    
     try {
-      isSubmitting = true;
+      // Use provided userId or try to get from auth
+      const uid = userId || auth.currentUser?.uid;
       
-      if (!$authStore.user) {
-        throw new Error('User not authenticated');
+      if (!uid) {
+        throw new Error('User ID not available for upload');
       }
       
-      // Upload image if one is selected
-      let imageUrl: string | null = null;
-      if (imageFile) {
-        imageUrl = await uploadImage();
-      }
+      const storageRef = ref(storage, `users/${uid}/posts/${Date.now()}_${imageFile.name}`);
       
-      // Prepare media URLs array with the new image if uploaded
-      const mediaUrls = [...formData.mediaUrls];
-      if (imageUrl) {
-        mediaUrls.push(imageUrl);
-      }
+      // Upload the file
+      const uploadTask = await uploadBytes(storageRef, imageFile);
       
-      const postData: Partial<Post> = {
-        content: formData.content,
-        scheduledDate: formData.scheduledDate.toISOString(),
-        platforms: formData.platforms,
-        platform: formData.platforms[0], // For backward compatibility
-        mediaUrls: mediaUrls,
-        tags: formData.tags,
-        userId: $authStore.user.uid,
-        createdAt: new Date().toISOString(),
-        status: 'scheduled'
-      };
+      // Get download URL
+      const downloadURL = await getDownloadURL(uploadTask.ref);
       
-      if (post?.id) {
-        // Update existing post
-        await postStore.updatePost(post.id, postData);
-        toastStore.success('Post updated successfully!');
-      } else {
-        // Create new post
-        await postStore.createPost(postData);
-        toastStore.success('Post created successfully!');
-      }
-      
-      // Clean up any object URLs to prevent memory leaks
-      if (imagePreviewUrl) {
-        URL.revokeObjectURL(imagePreviewUrl);
-      }
-      
-      dispatch('save');
+      return downloadURL;
     } catch (error) {
-      console.error('Error saving post:', error);
-      toastStore.error('Failed to save post');
-    } finally {
-      isSubmitting = false;
+      console.error('Error uploading image:', error);
+      toastStore.error('Failed to upload image');
+      return null;
     }
   }
   
@@ -147,34 +131,74 @@ import { getFirebaseAuth } from '$lib/firebase/firebase';
     }
   }
   
-  // Upload image to Firebase Storage
-  async function uploadImage(): Promise<string | null> {
-    if (!imageFile || !$authStore.user) {
-      return null;
-    }
-    
-    try {
-      const storage = getFirebaseStorage();
-      const storageRef = ref(storage, `users/${$authStore.user.uid}/posts/${Date.now()}_${imageFile.name}`);
-      
-      // Upload the file
-      const uploadTask = await uploadBytes(storageRef, imageFile);
-      
-      // Get download URL
-      const downloadURL = await getDownloadURL(uploadTask.ref);
-      
-      return downloadURL;
-    } catch (error) {
-      console.error('Error uploading image:', error);
-      toastStore.error('Failed to upload image');
-      return null;
-    }
-  }
-  
   // Request AI suggestions (can be implemented later)
   function requestSuggestions() {
     // Will call aiService here
     toastStore.info('AI suggestions coming soon!');
+  }
+  
+  // Save post
+  async function handleSave() {
+    try {
+      isSubmitting = true;
+      
+      // Get current auth state directly from auth
+      const currentUser = auth.currentUser;
+      
+      if (!currentUser) {
+        toastStore.error('You must be logged in to save posts');
+        return;
+      }
+      
+      // Use the Firebase user ID directly
+      const userId = currentUser.uid;
+      
+      // Upload image if one is selected
+      let imageUrl: string | null = null;
+      if (imageFile) {
+        imageUrl = await uploadImage(userId);
+      }
+      
+      // Prepare media URLs array with the new image if uploaded
+      const mediaUrls = [...formData.mediaUrls];
+      if (imageUrl) {
+        mediaUrls.push(imageUrl);
+      }
+      
+      const postData: Partial<Post> = {
+        content: formData.content,
+        scheduledDate: formData.scheduledDate.toISOString(),
+        platforms: formData.platforms,
+        platform: formData.platforms[0], // For backward compatibility
+        mediaUrls: mediaUrls,
+        tags: formData.tags,
+        userId: userId,
+        createdAt: new Date().toISOString(),
+        status: 'scheduled'
+      };
+      
+      if (post?.id) {
+        // Update existing post
+        await postStore.updatePost(post.id, postData);
+        toastStore.success('Post updated successfully!');
+      } else {
+        // Create new post
+        await postStore.createPost(postData);
+        toastStore.success('Post created successfully!');
+      }
+      
+      // Clean up any object URLs to prevent memory leaks
+      if (imagePreviewUrl) {
+        URL.revokeObjectURL(imagePreviewUrl);
+      }
+      
+      dispatch('save');
+    } catch (error) {
+      console.error('Error saving post:', error);
+      toastStore.error('Failed to save post');
+    } finally {
+      isSubmitting = false;
+    }
   }
 </script>
 
@@ -292,7 +316,10 @@ import { getFirebaseAuth } from '$lib/firebase/firebase';
           id="scheduledDate" 
           type="datetime-local"
           class="w-full p-2 border rounded"
-          bind:value={formData.scheduledDate}
+          bind:value={scheduledDateFormatted}
+          on:change={(e) => {
+            formData.scheduledDate = new Date(e.currentTarget.value);
+          }}
         />
       </div>
       
@@ -304,7 +331,7 @@ import { getFirebaseAuth } from '$lib/firebase/firebase';
         <Button 
           variant="primary" 
           type="submit" 
-          disabled={isSubmitting || !formData.content}
+          disabled={isSubmitting || !formData.content || formData.platforms.length === 0}
         >
           {isSubmitting ? 'Saving...' : post ? 'Update Post' : 'Create Post'}
         </Button>

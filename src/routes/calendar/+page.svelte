@@ -5,7 +5,7 @@
   import Calendar from './components/Calendar.svelte';
   import PostCreateModal from './components/PostCreateModal.svelte';
   import ToastContainer from '$lib/components/common/ToastContainer.svelte';
-  import { getFirebaseAuth } from '$lib/firebase/firebase';
+  import { auth } from '$lib/firebase'; // Use the new Firebase import
   import { authStore } from '$lib/stores/authStore';
   import { postStore } from '$lib/stores/postStore';
   import { goto } from '$app/navigation';
@@ -16,17 +16,15 @@
   let editingPost: any = null; // Replace with proper Post type
   
   onMount(() => {
-    // Initialize Firebase Auth
-    const auth = getFirebaseAuth();
-    
-    // Check authentication
-    if (!$authStore.user) {
+    // Check authentication using auth directly
+    if (!auth.currentUser) {
       goto('/login');
+      return;
     }
     
     // Initialize post data
-    if ($authStore.user?.uid) {
-      postStore.loadUserPosts($authStore.user.uid);
+    if (auth.currentUser?.uid) {
+      postStore.loadUserPosts(auth.currentUser.uid);
     }
   });
   

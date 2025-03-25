@@ -1,77 +1,36 @@
+// storage.rules
 rules_version = '2';
+
 service firebase.storage {
   match /b/{bucket}/o {
-    // Helper functions
-    function isSignedIn() {
-      return request.auth != null;
-    }
-    
-    function isOwner(userId) {
-      return request.auth.uid == userId;
-    }
-    
-    function isAdmin() {
-      return request.auth.token.admin == true;
-    }
-    
-    function hasTeamAccess(teamId) {
-      return firestore.exists(/databases/(default)/documents/teamMembers/$(request.auth.uid + '_' + teamId));
-    }
-    
-    // Content media uploads
-    match /content/{userId}/{contentId}/{fileName} {
-      // Users can only read and write their own content
-      allow read: if isSignedIn() && isOwner(userId);
-      
-      // Allow upload with size and content type restrictions
-      allow create: if isSignedIn() && 
-                     isOwner(userId) && 
-                     request.resource.size < 10 * 1024 * 1024 && // 10MB max
-                     request.resource.contentType.matches('image/.*|video/.*|audio/.*');
-      
-      // Allow updates and deletes for the owner
-      allow update, delete: if isSignedIn() && isOwner(userId);
-    }
-    
-    // Team content uploads
-    match /teams/{teamId}/{contentId}/{fileName} {
-      // Team members can read team content
-      allow read: if isSignedIn() && hasTeamAccess(teamId);
-      
-      // Team members can upload content with restrictions
-      allow create: if isSignedIn() && 
-                     hasTeamAccess(teamId) && 
-                     request.resource.size < 10 * 1024 * 1024 && // 10MB max
-                     request.resource.contentType.matches('image/.*|video/.*|audio/.*');
-      
-      // Only team members can update and delete
-      allow update, delete: if isSignedIn() && hasTeamAccess(teamId);
-    }
-    
-    // User profile pictures
-    match /profiles/{userId}/{fileName} {
-      // Anyone can view profile pictures
-      allow read: if isSignedIn();
-      
-      // Users can only upload their own profile pictures
-      allow create: if isSignedIn() && 
-                     isOwner(userId) && 
-                     request.resource.size < 5 * 1024 * 1024 && // 5MB max
-                     request.resource.contentType.matches('image/.*');
-      
-      // Allow owner to update/delete profile picture
-      allow update, delete: if isSignedIn() && isOwner(userId);
-    }
-    
-    // Public assets (accessible to everyone)
-    match /public/{fileName} {
-      allow read: if true;
-      allow write: if isSignedIn() && isAdmin();
-    }
-    
-    // Default deny
     match /{allPaths=**} {
-      allow read, write: if false;
+      allow read, write: if request.auth != null;
     }
   }
 }
+
+/* 
+To set up CORS for your Firebase Storage bucket, follow these steps:
+
+1. Install the gsutil tool (part of the Google Cloud SDK)
+   - Download from: https://cloud.google.com/sdk/docs/install
+
+2. Create a cors.json file with these contents:
+```json
+[
+  {
+    "origin": ["*"],
+    "method": ["GET", "POST", "PUT", "DELETE", "HEAD"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": ["Content-Type", "Authorization", "Content-Length", "User-Agent"]
+  }
+]
+```
+
+3. Run this command (replace YOUR_BUCKET_NAME with your actual bucket name from Firebase console):
+   gsutil cors set cors.json gs://YOUR_BUCKET_NAME.appspot.com
+
+4. For development-only fix, you can temporarily set looser CORS in your browser:
+   - Install a CORS browser extension (like CORS Unblock for Chrome)
+   - Enable it when developing locally
+*/

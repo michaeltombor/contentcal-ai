@@ -20,7 +20,7 @@
   import ToastContainer from '$lib/components/common/ToastContainer.svelte';
   import { fade } from 'svelte/transition';
 
-  export let openCreateModal: (date?: Date) => void;
+  export let openCreateModal: (date?: Date) => void = () => {};
 
   // Loading state
   let isLoading = true;
@@ -41,8 +41,11 @@
   
   // Handle the add button click
   function handleAddButtonClick() {
-    // Call the openCreateModal function with current date
+    if (typeof openCreateModal === 'function') {
     openCreateModal(new Date());
+  } else {
+    console.error('openCreateModal function not provided to Calendar component');
+  }
   }
   
   // Direct implementation of the functions to avoid import issues
